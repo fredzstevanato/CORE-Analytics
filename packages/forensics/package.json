@@ -1,0 +1,15 @@
+{
+    "name":  "@core/forensics",
+    "version":  "0.1.0",
+    "private":  true,
+    "type":  "module",
+    "main":  "src/index.ts",
+    "types":  "src/index.ts",
+    "scripts":  {
+                    "build":  "tsc -p tsconfig.json",
+                    "dev":  "tsc -w -p tsconfig.json",
+                    "lint":  "echo \"No lint configured for @core/forensics\"",
+                    "typecheck":  "tsc -p tsconfig.json --noEmit",
+                    "format":  "prettier --check \"src/**/*.ts\""
+                }
+}

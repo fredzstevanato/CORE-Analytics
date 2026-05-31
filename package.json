@@ -1,0 +1,32 @@
+{
+  "name": "core-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:web": "npm run --workspace @core/web dev",
+    "dev:workers": "turbo run dev --filter=@core/worker-ingest --filter=@core/worker-ai",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "format": "turbo run format",
+    "ocr:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ocr-portable-check.ps1",
+    "db:generate": "npm run --workspace @core/db prisma:generate",
+    "db:migrate": "npm run --workspace @core/db prisma:migrate",
+    "db:seed": "npm run --workspace @core/db prisma:seed"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.11",
+    "prettier": "^3.5.3",
+    "turbo": "^2.9.6",
+    "typescript": "^5.8.2"
+  },
+  "engines": {
+    "node": ">=20.11.0 <25"
+  },
+  "packageManager": "npm@10.9.2"
+}

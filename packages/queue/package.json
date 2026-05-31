@@ -1,0 +1,20 @@
+{
+    "name":  "@core/queue",
+    "version":  "0.1.0",
+    "private":  true,
+    "type":  "module",
+    "main":  "src/index.ts",
+    "types":  "src/index.ts",
+    "scripts":  {
+                    "build":  "tsc -p tsconfig.json",
+                    "dev":  "tsc -w -p tsconfig.json",
+                    "lint":  "echo \"No lint configured for @core/queue\"",
+                    "typecheck":  "tsc -p tsconfig.json --noEmit",
+                    "format":  "prettier --check \"src/**/*.ts\""
+                },
+    "dependencies":  {
+                         "@core/shared":  "*",
+                         "bullmq":  "^5.47.2",
+                         "ioredis":  "^5.6.1"
+                     }
+}

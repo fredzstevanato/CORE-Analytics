@@ -1,0 +1,56 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "noUncheckedIndexedAccess": true,
+    "paths": {
+      "@core/ui/*": [
+        "./packages/ui/src/*"
+      ],
+      "@core/db/*": [
+        "./packages/db/src/*"
+      ],
+      "@core/shared/*": [
+        "./packages/shared/src/*"
+      ],
+      "@core/storage/*": [
+        "./packages/storage/src/*"
+      ],
+      "@core/search/*": [
+        "./packages/search/src/*"
+      ],
+      "@core/parsers/*": [
+        "./packages/parsers/src/*"
+      ],
+      "@core/cases/*": [
+        "./packages/cases/src/*"
+      ],
+      "@core/reports/*": [
+        "./packages/reports/src/*"
+      ],
+      "@core/forensics/*": [
+        "./packages/forensics/src/*"
+      ],
+      "@core/pdf-processing": [
+        "./packages/pdf-processing/src/index.ts"
+      ],
+      "@core/pdf-processing/*": [
+        "./packages/pdf-processing/src/*"
+      ],
+      "@core/queue/*": [
+        "./packages/queue/src/*"
+      ]
+    }
+  }
+}

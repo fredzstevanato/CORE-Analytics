@@ -1,0 +1,98 @@
+x-core-app-env: &core-app-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://${POSTGRES_USER:-core}:${POSTGRES_PASSWORD:-core}@postgres:5432/${POSTGRES_DB:-core_analytics}?schema=public
+  REDIS_URL: redis://redis:6379
+  OPENSEARCH_URL: http://opensearch:9200
+  OPENSEARCH_USERNAME: ${OPENSEARCH_USERNAME:-admin}
+  OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-Core@2026!Strong}
+  STORAGE_ROOT: /data/storage
+  SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set in .env}
+  SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:?SETTINGS_ENCRYPTION_KEY must be set in .env}
+  APP_NODE_ROLE: ${APP_NODE_ROLE:-STANDALONE}
+  SYNC_NODE_ID: ${SYNC_NODE_ID:-local-node}
+  SYNC_NODE_NAME: ${SYNC_NODE_NAME:-Local Node}
+  CENTRALIZER_URL: ${CENTRALIZER_URL:-}
+  SYNC_API_TOKEN: ${SYNC_API_TOKEN:-}
+  FFMPEG_BIN: ffmpeg
+  SEVEN_Z_BIN: 7z
+  TESSERACT_BIN: tesseract
+  CHROME_EXECUTABLE_PATH: /usr/bin/chromium
+  AI_TRANSCRIPTION_WORKER_CONCURRENCY: ${AI_TRANSCRIPTION_WORKER_CONCURRENCY:-2}
+  UFDR_AUDIO_RECOVERY_WORKER_CONCURRENCY: ${UFDR_AUDIO_RECOVERY_WORKER_CONCURRENCY:-4}
+
+services:
+  web:
+    image: ${CORE_IMAGE:-core-analytics:${CORE_IMAGE_TAG:-local}}
+    container_name: core-web
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    environment:
+      <<: *core-app-env
+      RUN_DB_MIGRATIONS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-3001}:3001"
+    volumes:
+      - core_storage:/data/storage
+      - ${UFDR_SOURCE_ROOT:-./storage/ufdr-imports}:/mnt/ufdr:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3001/api/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+
+  worker-ingest:
+    image: ${CORE_IMAGE:-core-analytics:${CORE_IMAGE_TAG:-local}}
+    container_name: core-worker-ingest
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    command: ["npm", "run", "--workspace", "@core/worker-ingest", "start"]
+    environment:
+      <<: *core-app-env
+      RUN_DB_MIGRATIONS: "false"
+    depends_on:
+      web:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - core_storage:/data/storage
+      - ${UFDR_SOURCE_ROOT:-./storage/ufdr-imports}:/mnt/ufdr:ro
+
+  worker-ai:
+    image: ${CORE_IMAGE:-core-analytics:${CORE_IMAGE_TAG:-local}}
+    container_name: core-worker-ai
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    command: ["npm", "run", "--workspace", "@core/worker-ai", "start"]
+    environment:
+      <<: *core-app-env
+      RUN_DB_MIGRATIONS: "false"
+      WHISPER_BIN: ${WHISPER_BIN:-whisper}
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      WHISPER_MODEL_DIR: /data/storage/models/whisper
+    depends_on:
+      web:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - core_storage:/data/storage
+
+volumes:
+  core_storage:

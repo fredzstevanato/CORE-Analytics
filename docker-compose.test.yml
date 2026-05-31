@@ -1,0 +1,159 @@
+name: core-analytics-test
+
+x-core-app-env: &core-app-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://core:core@postgres:5432/core_analytics?schema=public
+  REDIS_URL: redis://redis:6379
+  OPENSEARCH_URL: http://opensearch:9200
+  OPENSEARCH_USERNAME: admin
+  OPENSEARCH_PASSWORD: Core@2026!Strong
+  STORAGE_ROOT: /data/storage
+  SESSION_SECRET: docker-test-session-secret-change-me
+  SETTINGS_ENCRYPTION_KEY: docker-test-settings-secret-change-me
+  APP_NODE_ROLE: ${APP_NODE_ROLE:-STANDALONE}
+  SYNC_NODE_ID: ${SYNC_NODE_ID:-docker-test-node}
+  SYNC_NODE_NAME: ${SYNC_NODE_NAME:-Docker Test Node}
+  CENTRALIZER_URL: ${CENTRALIZER_URL:-}
+  SYNC_API_TOKEN: ${SYNC_API_TOKEN:-docker-test-sync-token}
+  FFMPEG_BIN: ffmpeg
+  SEVEN_Z_BIN: 7z
+  TESSERACT_BIN: tesseract
+  CHROME_EXECUTABLE_PATH: /usr/bin/chromium
+  AI_TRANSCRIPTION_WORKER_CONCURRENCY: ${AI_TRANSCRIPTION_WORKER_CONCURRENCY:-2}
+  UFDR_AUDIO_RECOVERY_WORKER_CONCURRENCY: ${UFDR_AUDIO_RECOVERY_WORKER_CONCURRENCY:-4}
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: core
+      POSTGRES_PASSWORD: core
+      POSTGRES_DB: core_analytics
+    ports:
+      - "${CORE_TEST_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - core_test_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U core -d core_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "${CORE_TEST_REDIS_PORT:-16379}:6379"
+    volumes:
+      - core_test_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  opensearch:
+    image: opensearchproject/opensearch:2.15.0
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      plugins.security.ssl.http.enabled: "false"
+      plugins.security.disabled: "true"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: Core@2026!Strong
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "${CORE_TEST_OPENSEARCH_PORT:-19200}:9200"
+      - "${CORE_TEST_OPENSEARCH_PERF_PORT:-19600}:9600"
+    volumes:
+      - core_test_opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "${CORE_TEST_MINIO_PORT:-19000}:9000"
+      - "${CORE_TEST_MINIO_CONSOLE_PORT:-19001}:9001"
+    volumes:
+      - core_test_minio_data:/data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: core-analytics:test
+    restart: unless-stopped
+    environment:
+      <<: *core-app-env
+      RUN_DB_MIGRATIONS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    ports:
+      - "${CORE_TEST_WEB_PORT:-3001}:3001"
+    volumes:
+      - core_test_storage:/data/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3001/api/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+
+  worker-ingest:
+    image: core-analytics:test
+    restart: unless-stopped
+    command: ["npm", "run", "--workspace", "@core/worker-ingest", "start"]
+    environment:
+      <<: *core-app-env
+      RUN_DB_MIGRATIONS: "false"
+    depends_on:
+      web:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - core_test_storage:/data/storage
+
+  worker-ai:
+    image: core-analytics:test
+    restart: unless-stopped
+    command: ["npm", "run", "--workspace", "@core/worker-ai", "start"]
+    environment:
+      <<: *core-app-env
+      RUN_DB_MIGRATIONS: "false"
+      WHISPER_BIN: ${CORE_TEST_WHISPER_BIN:-whisper}
+      WHISPER_MODEL: ${CORE_TEST_WHISPER_MODEL:-base}
+      WHISPER_MODEL_DIR: /data/storage/models/whisper
+    depends_on:
+      web:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - core_test_storage:/data/storage
+
+volumes:
+  core_test_postgres_data:
+  core_test_redis_data:
+  core_test_opensearch_data:
+  core_test_minio_data:
+  core_test_storage:

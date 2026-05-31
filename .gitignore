@@ -1,0 +1,36 @@
+node_modules
+.turbo
+.next
+dist
+coverage
+*.log
+.env
+.env.local
+.DS_Store
+tmp
+.tmp-*
+.vscode/
+*.tsbuildinfo
+storage
+backups
+
+# Local Python/AI/OCR environments and generated runtime payloads
+.python_env/
+.python_packages/
+.venv*/
+.venvs/
+tools/ocr/Library/
+tools/ocr/env/
+tools/ocr/info/
+tools/ocr/mamba-root/
+tools/ocr/micromamba.tar.bz2
+tools/ocr/tesseract-runtime/
+
+# Local Docker/export artifacts
+*.tar
+*.dump
+docker-data/
+postgres_data/
+redis_data/
+opensearch_data/
+minio_data/

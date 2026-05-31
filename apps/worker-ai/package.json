@@ -1,0 +1,25 @@
+{
+  "name": "@core/worker-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "benchmark:transcription": "tsx src/benchmark-transcription.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "lint": "echo \"No lint configured for @core/worker-ai\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "format": "prettier --check \"src/**/*.ts\""
+  },
+  "dependencies": {
+    "@core/cases": "*",
+    "@core/queue": "*",
+    "@core/shared": "*",
+    "bullmq": "^5.47.2",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3"
+  }
+}

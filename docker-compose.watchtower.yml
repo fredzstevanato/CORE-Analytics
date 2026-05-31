@@ -1,0 +1,13 @@
+services:
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: core-watchtower
+    restart: unless-stopped
+    command:
+      - --label-enable
+      - --cleanup
+      - --rolling-restart
+      - --interval
+      - "${WATCHTOWER_INTERVAL_SECONDS:-300}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

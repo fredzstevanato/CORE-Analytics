@@ -1,0 +1,38 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@core/pdf-processing": [
+        "../../packages/pdf-processing/src/index.ts"
+      ],
+      "@core/pdf-processing/*": [
+        "../../packages/pdf-processing/src/*"
+      ],
+      "@/*": [
+        "./*"
+      ]
+    },
+    "jsx": "preserve",
+    "noEmit": true,
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "strict": true,
+    "strictNullChecks": true,
+    "noImplicitAny": true,
+    "isolatedModules": true,
+    "allowJs": false
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

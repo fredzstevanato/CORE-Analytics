@@ -1,0 +1,33 @@
+﻿CORE-Analytics - Guia rapido de setup (maquina destino)
+
+1) Requisitos
+- Node.js 22.x (ou >=20.11.0 <25)
+- npm 10.x
+- Docker Desktop ativo
+
+2) Preparar variaveis
+- Copie .env.example para .env
+  PowerShell:
+  Copy-Item .env.example .env
+
+3) Subir infraestrutura
+- docker compose up -d
+
+4) Instalar dependencias
+- npm install
+
+5) Banco (Prisma)
+- npm run db:generate
+- npm run db:migrate
+- npm run db:seed
+
+6) Rodar aplicacao
+- npm run dev
+
+7) Acesso
+- http://localhost:3001
+- Login: usar MOCK_USER_EMAIL e MOCK_USER_PASSWORD do .env
+
+Observacoes
+- Este pacote nao inclui node_modules, storage, caches/builds e runtime OCR local.
+- Se for usar OCR/transcricao local, instalar/configurar binarios na maquina destino.

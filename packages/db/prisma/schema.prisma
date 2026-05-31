@@ -1,0 +1,748 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CaseStatus {
+  OPEN
+  CLOSED
+  ARCHIVED
+}
+
+enum CaseSourceType {
+  MANUAL
+  PDF_IMPORT
+  AI_INTAKE
+  UFDR_CONTEXT
+}
+
+enum CaseOperationalStatus {
+  DRAFT
+  UNDER_REVIEW
+  ACTIVE
+  CLOSED
+  ARCHIVED
+}
+
+enum CaseDocumentType {
+  INQUIRY_PDF
+  EXPERT_REPORT_PDF
+  SUPPORTING_DOCUMENT
+  CASE_NOTE_ATTACHMENT
+}
+
+enum CaseImportSessionStatus {
+  PENDING_ANALYSIS
+  READY_FOR_REVIEW
+  CONFIRMED
+  DISCARDED
+  FAILED
+}
+
+enum ExpertReportStatus {
+  UPLOADED
+  PARSED
+  REVIEWED
+}
+
+enum DeviceMatchStatus {
+  SUGGESTED
+  CONFIRMED
+  REJECTED
+}
+
+enum ExtractionStatus {
+  PENDING
+  PROCESSING
+  INDEXING
+  COMPLETED
+  FAILED
+}
+
+enum ArtifactType {
+  MESSAGE
+  CHAT
+  CONTACT
+  CALL
+  ATTACHMENT
+  FILE
+  LOCATION
+  ENTITY
+  OTHER
+}
+
+enum TranscriptionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id                    String              @id @default(uuid())
+  email                 String              @unique
+  name                  String
+  role                  String              @default("ANALYST")
+  passwordHash          String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  cases                 Case[]              @relation("CaseOwner")
+  notes                 AnalystNote[]
+  auditLogs             AuditLog[]
+  evidences             Evidence[]          @relation("EvidenceUploader")
+  custodyEvents         CustodyEvent[]
+  reports               GeneratedReport[]   @relation("ReportAuthor")
+  reviewedCases         Case[]              @relation("CaseReviewer")
+  caseDocuments         CaseDocument[]      @relation("CaseDocumentUploader")
+  caseImportSessions    CaseImportSession[] @relation("CaseImportSessionCreator")
+  expertReports         ExpertReport[]      @relation("ExpertReportUploader")
+  reviewedDeviceMatches DeviceMatch[]       @relation("DeviceMatchReviewer")
+  appSettings           AppSetting[]        @relation("AppSettingUpdater")
+}
+
+model AppSetting {
+  id             String   @id @default(uuid())
+  key            String   @unique
+  category       String   @default("GENERAL")
+  label          String?
+  description    String?
+  isSecret       Boolean  @default(false)
+  valueText      String?
+  valueJson      Json?
+  encryptedValue String?
+  fileName       String?
+  mimeType       String?
+  metadata       Json?
+  updatedById    String?
+  updatedBy      User?    @relation("AppSettingUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([category, key])
+}
+
+model Case {
+  id                        String                   @id @default(uuid())
+  caseNumber                String                   @unique
+  title                     String
+  description               String?
+  sourceType                CaseSourceType           @default(MANUAL)
+  operationalStatus         CaseOperationalStatus    @default(ACTIVE)
+  inquiryType               String?
+  inquiryNumber             String?
+  policeUnit                String?
+  inquiryLegalFraming       String?
+  inquiryInvolvedPeople     Json?
+  inquirySummaryText        String?
+  inquiryMainFacts          String?
+  inquiryInvestigativeFocus String?
+  initialContextSource      String?
+  extractionReportSummary   String?
+  status                    CaseStatus               @default(OPEN)
+  ownerId                   String?
+  owner                     User?                    @relation("CaseOwner", fields: [ownerId], references: [id])
+  reviewedAt                DateTime?
+  reviewedById              String?
+  reviewedBy                User?                    @relation("CaseReviewer", fields: [reviewedById], references: [id])
+  evidences                 Evidence[]
+  extractions               Extraction[]
+  artifacts                 Artifact[]
+  chats                     Chat[]
+  messages                  Message[]
+  attachments               Attachment[]
+  transcriptions            AudioTranscription[]
+  entities                  Entity[]
+  links                     Link[]
+  notes                     AnalystNote[]
+  timeline                  TimelineEvent[]
+  auditLogs                 AuditLog[]
+  custodyEvents             CustodyEvent[]
+  ocrDocuments              OcrDocument[]
+  aiInsights                AiInsight[]
+  reports                   GeneratedReport[]
+  documents                 CaseDocument[]
+  importSessions            CaseImportSession[]      @relation("CreatedCaseImportSessions")
+  expertReports             ExpertReport[]
+  expertReportIdentifiers   ExpertReportIdentifier[]
+  seizedObjects             SeizedObject[]
+  deviceMatches             DeviceMatch[]
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+}
+
+model CaseDocument {
+  id             String              @id @default(uuid())
+  caseId         String?
+  case           Case?               @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  type           CaseDocumentType
+  title          String
+  fileName       String
+  mimeType       String?
+  storagePath    String
+  sizeBytes      BigInt
+  sha256         String
+  source         String?
+  uploadedById   String?
+  uploadedBy     User?               @relation("CaseDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  metadata       Json?
+  importSessions CaseImportSession[]
+  expertReport   ExpertReport?       @relation("ExpertReportDocument")
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([caseId, type, createdAt])
+}
+
+model CaseImportSession {
+  id              String                  @id @default(uuid())
+  status          CaseImportSessionStatus @default(PENDING_ANALYSIS)
+  sourceType      CaseSourceType          @default(PDF_IMPORT)
+  documentId      String?
+  document        CaseDocument?           @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  createdCaseId   String?
+  createdCase     Case?                   @relation("CreatedCaseImportSessions", fields: [createdCaseId], references: [id], onDelete: SetNull)
+  createdById     String?
+  createdBy       User?                   @relation("CaseImportSessionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  draftPayload    Json?
+  pipelineSummary Json?
+  errorMessage    String?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  @@index([status, createdAt])
+  @@index([createdCaseId])
+}
+
+model Evidence {
+  id             String               @id @default(uuid())
+  caseId         String
+  case           Case                 @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  label          String
+  source         String?
+  mimeType       String?
+  fileName       String
+  originalPath   String
+  sizeBytes      BigInt
+  sha256         String
+  uploadedById   String?
+  uploadedBy     User?                @relation("EvidenceUploader", fields: [uploadedById], references: [id])
+  extraction     Extraction?
+  artifacts      Artifact[]
+  chats          Chat[]
+  messages       Message[]
+  attachments    Attachment[]
+  transcriptions AudioTranscription[]
+  timeline       TimelineEvent[]
+  custodyEvents  CustodyEvent[]
+  ocrDocuments   OcrDocument[]
+  aiInsights     AiInsight[]
+  reports        GeneratedReport[]
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+}
+
+model Extraction {
+  id                            String                         @id @default(uuid())
+  caseId                        String
+  case                          Case                           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId                    String                         @unique
+  evidence                      Evidence                       @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  status                        ExtractionStatus               @default(PENDING)
+  sourceFormat                  String                         @default("UFDR")
+  reportPath                    String?
+  reportFound                   Boolean                        @default(false)
+  reportParsedAt                DateTime?
+  reportError                   String?
+  processingDetails             Json?
+  processingPhase               String?
+  processingProgress            Int?
+  audioExtractedCount           Int?
+  audioExtractedTotal           Int?
+  audioRatePerMin               Float?
+  audioEtaSec                   Int?
+  audioLastArchivePath          String?
+  startedAt                     DateTime?
+  finishedAt                    DateTime?
+  createdAt                     DateTime                       @default(now())
+  updatedAt                     DateTime                       @updatedAt
+  devices                       Device[]
+  transcriptions                AudioTranscription[]
+  audioRecoveryBatchCheckpoints AudioRecoveryBatchCheckpoint[]
+  ocrDocuments                  OcrDocument[]
+  aiInsights                    AiInsight[]
+
+  @@index([status, updatedAt])
+  @@index([caseId, updatedAt])
+}
+
+model AudioRecoveryBatchCheckpoint {
+  id                               String     @id @default(uuid())
+  extractionId                     String
+  extraction                       Extraction @relation(fields: [extractionId], references: [id], onDelete: Cascade)
+  batchIndex                       Int
+  batchTotal                       Int
+  targetCount                      Int
+  extractedCount                   Int        @default(0)
+  skippedTimeoutCount              Int        @default(0)
+  skippedErrorCount                Int        @default(0)
+  transcriptionQueuedCount         Int        @default(0)
+  transcriptionSkippedMissingCount Int        @default(0)
+  transcriptionSkippedPolicyCount  Int        @default(0)
+  durationMs                       Int?
+  queueDelayMs                     Int?
+  status                           String     @default("COMPLETED")
+  error                            String?
+  lastArchivePath                  String?
+  startedAt                        DateTime?
+  finishedAt                       DateTime   @default(now())
+  createdAt                        DateTime   @default(now())
+  updatedAt                        DateTime   @updatedAt
+
+  @@unique([extractionId, batchIndex])
+  @@index([extractionId, status])
+  @@index([finishedAt])
+}
+
+model Device {
+  id                    String        @id @default(uuid())
+  extractionId          String
+  extraction            Extraction    @relation(fields: [extractionId], references: [id], onDelete: Cascade)
+  manufacturer          String?
+  model                 String?
+  osVersion             String?
+  imei                  String?
+  serialNumber          String?
+  matchedSeizedObjectId String?
+  matchedSeizedObject   SeizedObject? @relation("MatchedDeviceSeizedObject", fields: [matchedSeizedObjectId], references: [id], onDelete: SetNull)
+  metadata              Json?
+  deviceMatches         DeviceMatch[]
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+}
+
+model ExpertReport {
+  id                String                   @id @default(uuid())
+  caseId            String
+  case              Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  caseDocumentId    String?                  @unique
+  caseDocument      CaseDocument?            @relation("ExpertReportDocument", fields: [caseDocumentId], references: [id], onDelete: SetNull)
+  uploadedById      String?
+  uploadedBy        User?                    @relation("ExpertReportUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  status            ExpertReportStatus       @default(UPLOADED)
+  title             String
+  reportNumber      String?
+  issuingAgency     String?
+  examinerName      String?
+  issuedAt          DateTime?
+  summary           String?
+  parsedPayload     Json?
+  metadata          Json?
+  seizedObjects     SeizedObject[]
+  expertIdentifiers ExpertReportIdentifier[]
+  deviceMatches     DeviceMatch[]
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  @@index([caseId, createdAt])
+}
+
+model SeizedObject {
+  id                String                   @id @default(uuid())
+  caseId            String
+  case              Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  expertReportId    String?
+  expertReport      ExpertReport?            @relation(fields: [expertReportId], references: [id], onDelete: SetNull)
+  label             String
+  objectType        String?
+  manufacturer      String?
+  model             String?
+  imei              String?
+  imei2             String?
+  iccid1            String?
+  iccid2            String?
+  serialNumber      String?
+  custodyTag        String?
+  metadata          Json?
+  expertIdentifiers ExpertReportIdentifier[]
+  matchedDevices    Device[]                 @relation("MatchedDeviceSeizedObject")
+  deviceMatches     DeviceMatch[]
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  @@index([caseId, createdAt])
+}
+
+model ExpertReportIdentifier {
+  id              String        @id @default(uuid())
+  caseId          String
+  case            Case          @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  expertReportId  String
+  expertReport    ExpertReport  @relation(fields: [expertReportId], references: [id], onDelete: Cascade)
+  seizedObjectId  String?
+  seizedObject    SeizedObject? @relation(fields: [seizedObjectId], references: [id], onDelete: SetNull)
+  kind            String
+  algorithm       String?
+  value           String
+  normalizedValue String
+  sourceReference String?
+  confidence      Float?
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+
+  @@index([caseId, kind, normalizedValue])
+  @@index([expertReportId, kind, createdAt])
+}
+
+model DeviceMatch {
+  id             String            @id @default(uuid())
+  caseId         String
+  case           Case              @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  deviceId       String
+  device         Device            @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  seizedObjectId String
+  seizedObject   SeizedObject      @relation(fields: [seizedObjectId], references: [id], onDelete: Cascade)
+  expertReportId String?
+  expertReport   ExpertReport?     @relation(fields: [expertReportId], references: [id], onDelete: SetNull)
+  status         DeviceMatchStatus @default(SUGGESTED)
+  confidence     Float?
+  justification  String?
+  metadata       Json?
+  reviewedById   String?
+  reviewedBy     User?             @relation("DeviceMatchReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([deviceId, seizedObjectId])
+  @@index([caseId, status, createdAt])
+}
+
+model Artifact {
+  id         String       @id @default(uuid())
+  caseId     String
+  case       Case         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId String
+  evidence   Evidence     @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  type       ArtifactType
+  sourceApp  String?
+  externalId String?
+  title      String?
+  occurredAt DateTime?
+  metadata   Json?
+  createdAt  DateTime     @default(now())
+
+  @@index([caseId, evidenceId, type])
+}
+
+model Chat {
+  id           String        @id @default(uuid())
+  caseId       String
+  case         Case          @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId   String
+  evidence     Evidence      @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  sourceApp    String?
+  externalId   String?
+  title        String?
+  metadata     Json?
+  participants Participant[]
+  messages     Message[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Participant {
+  id         String   @id @default(uuid())
+  chatId     String
+  chat       Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  externalId String?
+  name       String?
+  phone      String?
+  email      String?
+  handle     String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+}
+
+model Message {
+  id          String       @id @default(uuid())
+  caseId      String
+  case        Case         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId  String
+  evidence    Evidence     @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  chatId      String?
+  chat        Chat?        @relation(fields: [chatId], references: [id], onDelete: SetNull)
+  externalId  String?
+  senderId    String?
+  body        String?
+  timestamp   DateTime?
+  direction   String?
+  metadata    Json?
+  attachments Attachment[]
+  createdAt   DateTime     @default(now())
+
+  @@index([caseId, evidenceId, timestamp])
+}
+
+model Attachment {
+  id             String               @id @default(uuid())
+  caseId         String
+  case           Case                 @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId     String
+  evidence       Evidence             @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  messageId      String?
+  message        Message?             @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  externalId     String?
+  fileName       String?
+  mimeType       String?
+  sizeBytes      BigInt?
+  path           String?
+  archivePath    String?
+  metadata       Json?
+  transcriptions AudioTranscription[]
+  ocrDocuments   OcrDocument[]
+  createdAt      DateTime             @default(now())
+
+  @@index([evidenceId, createdAt])
+}
+
+model AudioTranscription {
+  id             String              @id @default(uuid())
+  caseId         String
+  case           Case                @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId     String
+  evidence       Evidence            @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  extractionId   String
+  extraction     Extraction          @relation(fields: [extractionId], references: [id], onDelete: Cascade)
+  attachmentId   String
+  attachment     Attachment          @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  engine         String              @default("whisper-local")
+  language       String?
+  status         TranscriptionStatus @default(PENDING)
+  sourceFilePath String
+  text           String?
+  segments       Json?
+  error          String?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([caseId, evidenceId, extractionId, status])
+  @@index([extractionId, status, updatedAt])
+  @@index([extractionId, createdAt])
+}
+
+model CustodyEvent {
+  id           String    @id @default(uuid())
+  caseId       String
+  case         Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId   String?
+  evidence     Evidence? @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+  actorId      String?
+  actor        User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action       String
+  source       String?
+  previousHash String?
+  currentHash  String?
+  details      Json?
+  createdAt    DateTime  @default(now())
+
+  @@index([caseId, evidenceId, action, createdAt])
+}
+
+model OcrDocument {
+  id           String      @id @default(uuid())
+  caseId       String
+  case         Case        @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId   String
+  evidence     Evidence    @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  extractionId String?
+  extraction   Extraction? @relation(fields: [extractionId], references: [id], onDelete: SetNull)
+  attachmentId String?
+  attachment   Attachment? @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
+  sourcePath   String
+  language     String?
+  engine       String      @default("tesseract-local")
+  text         String?
+  confidence   Float?
+  metadata     Json?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model AiInsight {
+  id           String      @id @default(uuid())
+  caseId       String
+  case         Case        @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId   String?
+  evidence     Evidence?   @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+  extractionId String?
+  extraction   Extraction? @relation(fields: [extractionId], references: [id], onDelete: SetNull)
+  type         String
+  title        String
+  summary      String
+  score        Float?
+  metadata     Json?
+  createdAt    DateTime    @default(now())
+
+  @@index([caseId, type, createdAt])
+}
+
+model GeneratedReport {
+  id         String    @id @default(uuid())
+  caseId     String
+  case       Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId String?
+  evidence   Evidence? @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+  authorId   String?
+  author     User?     @relation("ReportAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  format     String
+  title      String
+  content    String
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+}
+
+model TimelineEvent {
+  id          String    @id @default(uuid())
+  caseId      String
+  case        Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId  String?
+  evidence    Evidence? @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+  occurredAt  DateTime?
+  category    String
+  title       String
+  description String?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+}
+
+model Entity {
+  id         String   @id @default(uuid())
+  caseId     String
+  case       Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  type       String
+  value      String
+  confidence Float?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([caseId, type, value])
+}
+
+model Link {
+  id           String   @id @default(uuid())
+  caseId       String
+  case         Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  fromEntityId String
+  toEntityId   String
+  type         String
+  weight       Float?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+}
+
+model AnalystNote {
+  id        String   @id @default(uuid())
+  caseId    String
+  case      Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  title     String?
+  content   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  caseId     String?
+  case       Case?    @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  targetType String
+  targetId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([caseId, action, createdAt])
+}
+
+model SyncNode {
+  id          String   @id @default(uuid())
+  nodeId      String   @unique
+  displayName String?
+  role        String   @default("NODE")
+  baseUrl     String?
+  metadata    Json?
+  lastSeenAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([role, updatedAt])
+}
+
+model SyncPackage {
+  id             String    @id @default(uuid())
+  packageId      String    @unique
+  direction      String
+  status         String
+  schemaVersion  String
+  sourceNodeId   String
+  sourceNodeName String?
+  caseId         String?
+  evidenceId     String?
+  extractionId   String?
+  caseNumber     String?
+  payloadHash    String
+  itemCounts     Json?
+  errorMessage   String?
+  exportedAt     DateTime?
+  receivedAt     DateTime?
+  importedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([direction, status, createdAt])
+  @@index([sourceNodeId, createdAt])
+  @@index([caseNumber, createdAt])
+}
+
+model SyncImportLog {
+  id             String   @id @default(uuid())
+  packageId      String
+  level          String   @default("INFO")
+  entityType     String?
+  sourceEntityId String?
+  localEntityId  String?
+  action         String
+  message        String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  @@index([packageId, createdAt])
+  @@index([entityType, action, createdAt])
+}
+
+model ExternalEntityMap {
+  id              String   @id @default(uuid())
+  sourceNodeId    String
+  entityType      String
+  sourceEntityId  String
+  localEntityType String
+  localEntityId   String
+  packageId       String?
+  contentHash     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([sourceNodeId, entityType, sourceEntityId])
+  @@index([localEntityType, localEntityId])
+  @@index([packageId])
+}
