@@ -30,6 +30,8 @@ COPY packages ./packages
 COPY scripts ./scripts
 
 RUN npm ci
+RUN NEXT_VERSION=$(node -p "require('./package-lock.json').packages['node_modules/next'].version") \
+  && npm install --no-save "@next/swc-linux-x64-gnu@$NEXT_VERSION"
 RUN npx prisma generate --schema packages/db/prisma/schema.prisma
 
 FROM deps AS builder

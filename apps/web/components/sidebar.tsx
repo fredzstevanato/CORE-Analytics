@@ -63,7 +63,8 @@ const navSections = [
     items: [
       { href: "/settings", label: "Configuracoes", icon: Settings },
       { href: "/settings/sync", label: "Sincronizacao", icon: Network },
-      { href: "/settings/operations", label: "Saude Operacional", icon: Activity }
+      { href: "/settings/operations", label: "Saude Operacional", icon: Activity },
+      { href: "/settings/updates", label: "Atualizacao", icon: Settings }
     ]
   }
 ];
