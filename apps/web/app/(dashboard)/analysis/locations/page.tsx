@@ -3,8 +3,30 @@ import { prisma } from "@core/db";
 import { AnalysisSubnav } from "@/components/analysis-subnav";
 import { AnalysisSyncActions } from "@/components/analysis-sync-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
+
+function numberFromMetadata(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(",", "."));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function buildKmlHref(input: { caseId?: string; extractionId?: string; evidenceId?: string }) {
+  const params = new URLSearchParams();
+  if (input.caseId) params.set("caseId", input.caseId);
+  if (input.extractionId) params.set("extractionId", input.extractionId);
+  if (input.evidenceId) params.set("evidenceId", input.evidenceId);
+  return `/api/analysis/locations/kml?${params.toString()}`;
+}
+
+function googleMapsHref(lat: number, lng: number) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lng}`)}`;
+}
 
 export default async function AnalysisLocationsPage({
   searchParams
@@ -88,14 +110,23 @@ export default async function AnalysisLocationsPage({
             <button className="rounded bg-zinc-900 px-4 py-2 text-sm text-white" type="submit">
               Filtrar
             </button>
+            <Button asChild variant="outline">
+              <Link
+                href={buildKmlHref({ caseId, extractionId, evidenceId: selectedEvidenceId })}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Baixar KML da evidencia
+              </Link>
+            </Button>
           </form>
           <AnalysisSyncActions caseId={caseId} evidenceId={selectedEvidenceId} />
 
           {rows.length === 0 ? <p className="text-sm text-zinc-500">Nenhum dado de localização indexado ainda.</p> : null}
           {rows.map((row) => {
             const meta = (row.metadata ?? {}) as Record<string, unknown>;
-            const lat = typeof meta.latitude === "number" ? meta.latitude : undefined;
-            const lng = typeof meta.longitude === "number" ? meta.longitude : undefined;
+            const lat = numberFromMetadata(meta.latitude ?? meta.lat);
+            const lng = numberFromMetadata(meta.longitude ?? meta.lng ?? meta.lon);
             const category = typeof meta.category === "string" ? meta.category : undefined;
             const categoryLabels: Record<string, string> = {
               CELL_TOWER: "Torre celular",
@@ -114,9 +145,21 @@ export default async function AnalysisLocationsPage({
                     </span>
                   ) : null}
                 </div>
-                <Link className="text-xs text-blue-700 hover:underline" href={`/cases/${row.caseId}`}>
-                  Abrir caso
-                </Link>
+                <div className="flex flex-wrap gap-2">
+                  {lat !== undefined && lng !== undefined ? (
+                    <Link
+                      className="rounded border border-zinc-300 px-2 py-1 text-xs text-blue-700 hover:bg-zinc-50"
+                      href={googleMapsHref(lat, lng)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Abrir no Google Maps
+                    </Link>
+                  ) : null}
+                  <Link className="rounded border border-zinc-300 px-2 py-1 text-xs text-blue-700 hover:bg-zinc-50" href={`/cases/${row.caseId}`}>
+                    Abrir caso
+                  </Link>
+                </div>
               </div>
               <p className="text-xs text-zinc-500">
                 Caso: {row.case.caseNumber} • Evidência: {row.evidence.fileName}

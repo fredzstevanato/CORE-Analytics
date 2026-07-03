@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -108,7 +109,7 @@ async function tryLoadLogoDataUri(filename: string) {
 
 function resolveChromeExecutablePath() {
   const fromEnv = process.env.CHROME_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH;
-  if (fromEnv) return fromEnv;
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
 
   const candidates = [
     "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -118,7 +119,7 @@ function resolveChromeExecutablePath() {
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser"
   ];
-  return candidates.find((value) => value.length > 0);
+  return candidates.find((value) => existsSync(value));
 }
 
 async function renderHtmlToPdf(input: { html: string }) {

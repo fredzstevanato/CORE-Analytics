@@ -3,6 +3,7 @@ import type { Prisma } from "@core/db";
 import { prisma } from "@core/db";
 import { listCases } from "@core/cases";
 import { AnalysisSubnav } from "@/components/analysis-subnav";
+import { AudioReviewInlineCheckbox } from "@/components/audio-review-selection";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
@@ -18,6 +19,7 @@ type PageProps = {
     page?: string;
     excludedOnly?: string;
     transcribedOnly?: string;
+    unlinkedOnly?: string;
   }>;
 };
 
@@ -58,6 +60,7 @@ function buildPageHref(input: {
   page: number;
   excludedOnly?: boolean;
   transcribedOnly?: boolean;
+  unlinkedOnly?: boolean;
 }) {
   const params = new URLSearchParams();
   if (input.caseId) params.set("caseId", input.caseId);
@@ -65,6 +68,7 @@ function buildPageHref(input: {
   if (input.q) params.set("q", input.q);
   if (input.excludedOnly) params.set("excludedOnly", "1");
   if (input.transcribedOnly) params.set("transcribedOnly", "1");
+  if (input.unlinkedOnly) params.set("unlinkedOnly", "1");
   params.set("page", String(input.page));
   return `/analysis/audios?${params.toString()}`;
 }
@@ -95,6 +99,47 @@ function audioWhereFilter(): Prisma.AttachmentWhereInput {
   };
 }
 
+function opusWhereFilter(): Prisma.AttachmentWhereInput {
+  return {
+    OR: [
+      { fileName: { endsWith: ".opus", mode: "insensitive" } },
+      { archivePath: { endsWith: ".opus", mode: "insensitive" } }
+    ]
+  };
+}
+
+function completedTranscriptionWhereFilter(): Prisma.AttachmentWhereInput {
+  return {
+    transcriptions: {
+      some: {
+        status: "COMPLETED",
+        text: { not: null }
+      }
+    }
+  };
+}
+
+function stringArrayFromMetadata(value: unknown, key: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const raw = (value as Record<string, unknown>)[key];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function metadataStringArray(value: unknown, key: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const raw = (value as Record<string, unknown>)[key];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function isRelevantAudioInsight(insight?: { title: string; score: number | null; metadata: Prisma.JsonValue | null }) {
+  if (!insight) return false;
+  const tags = metadataStringArray(insight.metadata, "tags");
+  const title = insight.title.toLowerCase();
+  return tags.length > 0 || title.includes("potential signals") || Number(insight.score ?? 0) >= 0.45;
+}
+
 export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const page = parsePage(params.page);
@@ -103,6 +148,7 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
   const extractionId = params.extractionId?.trim() || undefined;
   const excludedOnly = params.excludedOnly === "1";
   const transcribedOnly = params.transcribedOnly === "1";
+  const unlinkedOnly = params.unlinkedOnly === "1";
   const [cases, extractions] = await Promise.all([
     listCases(),
     prisma.extraction.findMany({
@@ -122,10 +168,11 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
 
   const where: Prisma.AttachmentWhereInput = {
     AND: [
-      { messageId: { not: null } },
-      audioWhereFilter(),
+      unlinkedOnly ? { messageId: null } : {},
+      unlinkedOnly ? opusWhereFilter() : audioWhereFilter(),
       caseId ? { caseId } : {},
       selectedEvidenceId ? { evidenceId: selectedEvidenceId } : {},
+      unlinkedOnly ? completedTranscriptionWhereFilter() : {},
       excludedOnly
         ? {
             metadata: {
@@ -135,14 +182,7 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
           }
         : {},
       transcribedOnly
-        ? {
-            transcriptions: {
-              some: {
-                status: "COMPLETED",
-                text: { not: null }
-              }
-            }
-          }
+        ? completedTranscriptionWhereFilter()
         : {},
       q
         ? {
@@ -157,8 +197,13 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
     ]
   };
 
-  const [total, withTranscription, rows] = await Promise.all([
+  const [total, unlinkedTotal, withTranscription, rows, latestSelection] = await Promise.all([
     prisma.attachment.count({ where }),
+    prisma.attachment.count({
+      where: {
+        AND: [where, { messageId: null }]
+      }
+    }),
     prisma.attachment.count({
       where: {
         AND: [
@@ -181,6 +226,8 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
+        caseId: true,
+        evidenceId: true,
         fileName: true,
         archivePath: true,
         mimeType: true,
@@ -207,18 +254,68 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
           orderBy: { createdAt: "desc" },
           take: 1,
           select: {
+            id: true,
             text: true,
             createdAt: true,
             engine: true
           }
         }
       }
-    })
+    }),
+    caseId
+      ? prisma.aiInsight.findFirst({
+          where: {
+            caseId,
+            type: "AUDIO_UNLINKED_SELECTION",
+            ...(selectedEvidenceId ? { evidenceId: selectedEvidenceId } : {})
+          },
+          orderBy: { createdAt: "desc" },
+          select: { metadata: true }
+        })
+      : Promise.resolve(null)
   ]);
+
+  const transcriptionIds = rows.map((row) => row.transcriptions[0]?.id).filter((id): id is string => Boolean(id));
+  const transcriptionInsights =
+    transcriptionIds.length > 0
+      ? await prisma.aiInsight.findMany({
+          where: {
+            type: "TRANSCRIPTION",
+            OR: transcriptionIds.map((id) => ({
+              metadata: {
+                path: ["sourceId"],
+                equals: id
+              }
+            }))
+          },
+          orderBy: { createdAt: "desc" },
+          take: transcriptionIds.length * 3,
+          select: {
+            id: true,
+            title: true,
+            summary: true,
+            score: true,
+            metadata: true,
+            createdAt: true
+          }
+        })
+      : [];
+
+  const insightByTranscriptionId = new Map<string, (typeof transcriptionInsights)[number]>();
+  for (const insight of transcriptionInsights) {
+    const sourceId =
+      insight.metadata && typeof insight.metadata === "object" && !Array.isArray(insight.metadata)
+        ? (insight.metadata as Record<string, unknown>).sourceId
+        : null;
+    if (typeof sourceId === "string" && !insightByTranscriptionId.has(sourceId)) {
+      insightByTranscriptionId.set(sourceId, insight);
+    }
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const clampedPage = Math.min(page, totalPages);
   const withoutTranscription = Math.max(0, total - withTranscription);
+  const initialSelectedIds = stringArrayFromMetadata(latestSelection?.metadata, "selectedAttachmentIds");
 
   return (
     <section className="space-y-4">
@@ -278,12 +375,21 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
               <input type="checkbox" name="transcribedOnly" value="1" defaultChecked={transcribedOnly} />
               Com transcricoes
             </label>
+
+            <label className="inline-flex items-center gap-2 rounded border border-zinc-200 px-3 py-2 text-sm text-zinc-700">
+              <input type="checkbox" name="unlinkedOnly" value="1" defaultChecked={unlinkedOnly} />
+              Somente .opus sem chat transcritos
+            </label>
           </form>
 
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-4">
             <div className="rounded border border-zinc-200 bg-zinc-50 p-2 text-sm">
-              <p className="text-xs text-zinc-500">Total de audios vinculados</p>
+              <p className="text-xs text-zinc-500">Total de audios</p>
               <p className="text-lg font-semibold text-zinc-900">{total}</p>
+            </div>
+            <div className="rounded border border-zinc-200 bg-zinc-50 p-2 text-sm">
+              <p className="text-xs text-zinc-500">Sem chat vinculado</p>
+              <p className="text-lg font-semibold text-zinc-900">{unlinkedTotal}</p>
             </div>
             <div className="rounded border border-zinc-200 bg-zinc-50 p-2 text-sm">
               <p className="text-xs text-zinc-500">Com transcricao</p>
@@ -308,7 +414,11 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
 
           {rows.map((row) => {
             const transcript = row.transcriptions[0]?.text?.trim();
-            const chatTitle = row.message?.chat?.title?.trim() || "Chat sem titulo";
+            const transcriptionId = row.transcriptions[0]?.id;
+            const insight = transcriptionId ? insightByTranscriptionId.get(transcriptionId) : undefined;
+            const aiRelevant = isRelevantAudioInsight(insight);
+            const tags = metadataStringArray(insight?.metadata, "tags");
+            const chatTitle = row.message?.chat?.title?.trim() || "Sem chat vinculado";
             const displayName = baseName(row.fileName, row.archivePath);
             return (
               <article key={row.id} className="space-y-2 rounded-lg border border-zinc-200 bg-white p-3">
@@ -318,8 +428,29 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
                     <p className="text-xs text-zinc-600">
                       {chatTitle} | {row.message?.timestamp ? new Date(row.message.timestamp).toLocaleString("pt-BR") : "Sem data"}
                     </p>
+                    {row.message === null ? (
+                      <p className="text-xs font-semibold text-amber-700">Audio sem vinculo com chat; pode ser arquivo recuperado/lixeira.</p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    {insight ? (
+                      <span
+                        className={`rounded px-2 py-1 text-xs font-semibold ${
+                          aiRelevant ? "bg-red-100 text-red-700" : "bg-zinc-100 text-zinc-700"
+                        }`}
+                      >
+                        {aiRelevant ? "IA: pertinente" : "IA: sem sinal critico"}
+                      </span>
+                    ) : null}
+                    {row.message === null ? (
+                      <AudioReviewInlineCheckbox
+                        caseId={caseId}
+                        evidenceId={selectedEvidenceId}
+                        extractionId={extractionId}
+                        attachmentId={row.id}
+                        initialSelected={initialSelectedIds.includes(row.id)}
+                      />
+                    ) : null}
                     <a
                       href={`/api/attachments/${row.id}/content?download=1`}
                       className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100"
@@ -336,7 +467,7 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
                     </a>
                     <Link
                       href={`/analysis/messages?${caseId ? `caseId=${encodeURIComponent(caseId)}&` : ""}${extractionId ? `extractionId=${encodeURIComponent(extractionId)}&` : ""}chatId=${row.message?.chat?.id ?? ""}`}
-                      className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100"
+                      className={`rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 ${row.message?.chat?.id ? "" : "pointer-events-none opacity-50"}`}
                     >
                       Abrir chat
                     </Link>
@@ -359,6 +490,15 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
                 ) : (
                   <p className="text-xs text-zinc-500">Sem transcricao concluida para este audio. Use o player para escutar.</p>
                 )}
+
+                {insight ? (
+                  <div className={`rounded border p-2 text-sm ${aiRelevant ? "border-red-200 bg-red-50 text-red-900" : "border-zinc-200 bg-zinc-50 text-zinc-800"}`}>
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide">Analise automatica da IA</p>
+                    <p className="font-medium">{insight.title}</p>
+                    {tags.length > 0 ? <p className="text-xs">Sinais: {tags.join(", ")}</p> : null}
+                    <p className="mt-1 whitespace-pre-wrap break-words text-xs">{insight.summary}</p>
+                  </div>
+                ) : null}
               </article>
             );
           })}
@@ -372,7 +512,8 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
                   q,
                   page: clampedPage - 1,
                   excludedOnly,
-                  transcribedOnly
+                  transcribedOnly,
+                  unlinkedOnly
                 })}
                 className="rounded border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
               >
@@ -390,7 +531,8 @@ export default async function AnalysisAudiosPage({ searchParams }: PageProps) {
                   q,
                   page: clampedPage + 1,
                   excludedOnly,
-                  transcribedOnly
+                  transcribedOnly,
+                  unlinkedOnly
                 })}
                 className="rounded border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
               >

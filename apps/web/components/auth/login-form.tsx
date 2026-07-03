@@ -21,6 +21,7 @@ export function LoginForm() {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ email, password })
       });
 
@@ -40,7 +41,7 @@ export function LoginForm() {
         return;
       }
 
-      router.push("/dashboard");
+      window.location.assign("/dashboard");
       router.refresh();
     } catch {
       setError("Nao foi possivel conectar ao servidor.");

@@ -73,6 +73,56 @@ function firstParticipantName(chat: {
   return named?.name ?? named?.handle ?? named?.phone ?? named?.email ?? "Interlocutor";
 }
 
+function phoneFromParticipantValue(value?: string | null) {
+  if (!value) return null;
+  const whatsapp = value.match(/(\d{8,15})@s\.whatsapp\.net/i)?.[1];
+  if (whatsapp) return whatsapp;
+  const digits = value.replace(/\D/g, "");
+  return digits.length >= 8 && digits.length <= 15 ? digits : null;
+}
+
+function participantPhone(participant: {
+  phone?: string | null;
+  handle?: string | null;
+  externalId?: string | null;
+}) {
+  return (
+    phoneFromParticipantValue(participant.phone) ??
+    phoneFromParticipantValue(participant.handle) ??
+    phoneFromParticipantValue(participant.externalId)
+  );
+}
+
+function participantLabel(participant: {
+  name?: string | null;
+  handle?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  externalId?: string | null;
+}) {
+  const name = participant.name?.trim() || participant.email?.trim() || "Contato";
+  const phone = participantPhone(participant);
+  if (phone) return `${name} (${phone})`;
+  return participant.handle?.trim() || participant.phone?.trim() || participant.email?.trim() || name;
+}
+
+function participantPhoneSummary(
+  participants: Array<{
+    name?: string | null;
+    handle?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    externalId?: string | null;
+  }>,
+  limit = 3
+) {
+  const labels = [...new Set(participants.map(participantLabel).filter(Boolean))];
+  if (labels.length === 0) return "Sem telefone identificado";
+  const visible = labels.slice(0, limit);
+  const remaining = labels.length - visible.length;
+  return `${visible.join(" | ")}${remaining > 0 ? ` | +${remaining}` : ""}`;
+}
+
 function panelHeaderClass(platform: ReturnType<typeof detectChatPlatform>) {
   if (platform === "whatsapp") return "border-emerald-200 bg-emerald-50 text-emerald-900";
   if (platform === "instagram") return "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-900";
@@ -151,7 +201,7 @@ export default async function AnalysisMessagesPage({
         caseId: true,
         participants: {
           take: 3,
-          select: { name: true, handle: true, phone: true, email: true, metadata: true }
+          select: { externalId: true, name: true, handle: true, phone: true, email: true, metadata: true }
         },
         messages: {
           take: 1,
@@ -171,7 +221,7 @@ export default async function AnalysisMessagesPage({
         where: { id: activeChatId },
         include: {
           participants: {
-            select: { id: true, name: true, handle: true, phone: true, email: true, metadata: true }
+            select: { id: true, externalId: true, name: true, handle: true, phone: true, email: true, metadata: true }
           },
           messages: {
             take: 800,
@@ -389,6 +439,9 @@ export default async function AnalysisMessagesPage({
                         </span>
                       </div>
                       <p className="truncate text-xs text-zinc-600">{preview}</p>
+                      <p className="mt-1 truncate text-[11px] text-zinc-500">
+                        {participantPhoneSummary(chat.participants)}
+                      </p>
                       <div className="mt-1 flex items-center justify-between text-[11px] text-zinc-500">
                         <span>{chat._count.messages} msgs</span>
                         <span>{timestamp ? new Date(timestamp).toLocaleString("pt-BR") : ""}</span>
@@ -408,6 +461,9 @@ export default async function AnalysisMessagesPage({
                         <p className="font-semibold">{activeChat.title ?? firstParticipantName(activeChat)}</p>
                         <p className="text-xs opacity-90">
                           {activeChat.participants.length} participantes | {activeChat.messages.length} mensagens carregadas
+                        </p>
+                        <p className="mt-1 text-xs opacity-90">
+                          Telefones/WhatsApp: {participantPhoneSummary(activeChat.participants, 8)}
                         </p>
                       </div>
                       <div className="flex items-start gap-2">

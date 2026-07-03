@@ -1,6 +1,23 @@
 import { spawn } from "node:child_process";
 
 export async function runOcr(input: { sourcePath: string; language?: string }): Promise<{ text: string; confidence?: number }> {
+  const languages = Array.from(new Set([input.language, "eng", undefined]));
+  let lastError: unknown;
+  for (const language of languages) {
+    try {
+      return await runTesseract({ sourcePath: input.sourcePath, language });
+    } catch (error) {
+      lastError = error;
+      if (!isMissingLanguageError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("OCR failed.");
+}
+
+function runTesseract(input: { sourcePath: string; language?: string }): Promise<{ text: string; confidence?: number }> {
   const tesseractBin = process.env.TESSERACT_BIN ?? "tesseract";
   const args = [input.sourcePath, "stdout"];
   if (input.language) {
@@ -22,4 +39,11 @@ export async function runOcr(input: { sourcePath: string; language?: string }): 
       }
     });
   });
+}
+
+function isMissingLanguageError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /failed loading language|couldn't load any languages|error opening data file/i.test(error.message);
 }

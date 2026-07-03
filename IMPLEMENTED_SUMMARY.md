@@ -1,163 +1,189 @@
-# CORE Analytics - Resumo do que já foi implementado
+# CORE Analytics - Resumo implementado
 
-## 1) Estrutura do monorepo
+## 1. Estrutura do monorepo
 
-Monorepo criado com Turborepo + npm workspaces:
+Monorepo com Turborepo + npm workspaces:
 
-- `apps/web` (Next.js App Router)
-- `apps/worker-ingest` (ingestão UFDR + parsing + indexação + fila de transcrição)
-- `apps/worker-ai` (transcrição local com Whisper)
-- `packages/ui`
-- `packages/db`
-- `packages/shared`
-- `packages/storage`
-- `packages/search`
-- `packages/parsers`
-- `packages/cases`
-- `packages/reports`
-- `packages/forensics`
-- `packages/queue`
+- `apps/web`: Next.js App Router, telas e APIs
+- `apps/worker-ingest`: ingestao UFDR, parsing, persistencia, indexacao e recuperacao de anexos
+- `apps/worker-ai`: transcricao, OCR, classificacao, triagem e relatorios por fila
+- `packages/db`: Prisma + schema de dominio
+- `packages/shared`: schemas Zod e tipos compartilhados
+- `packages/search`: OpenSearch, indices e busca investigativa
+- `packages/parsers`: parser UFDR/Cellebrite
+- `packages/cases`: servicos de caso, evidencia, triagem e sincronizacao
+- `packages/reports`: relatorio consolidado
+- `packages/queue`: BullMQ e filas
+- `packages/storage`, `packages/ui`, `packages/forensics`
 
-## 2) Stack base configurada
+## 2. Stack
 
 - Next.js + TypeScript estrito
-- Tailwind + componentes base estilo shadcn
-- Prisma + PostgreSQL
+- Tailwind CSS + componentes estilo shadcn/ui
+- PostgreSQL + Prisma
 - Redis + BullMQ
 - OpenSearch
-- Storage local com abstração para evolução S3/MinIO
-- Docker Compose para desenvolvimento (`postgres`, `redis`, `opensearch`, `minio`)
+- Storage local com abstracao para evolucao
+- Docker Compose para ambiente de desenvolvimento
 
-## 3) Domínio e banco de dados
+## 3. Ingestao UFDR
 
-Schema Prisma implementado com entidades:
+Fluxo implementado:
 
-- `User`, `Case`, `Evidence`, `Extraction`, `Device`
-- `Artifact`, `Chat`, `Participant`, `Message`, `Attachment`
-- `TimelineEvent`, `Entity`, `Link`, `AnalystNote`, `AuditLog`
-- `AudioTranscription` (novo para pipeline de transcrição)
+1. Registro de evidencia e extracao por caso
+2. Copia do `.ufdr` para storage local
+3. Calculo de SHA-256
+4. Job `ingest-ufdr`
+5. Abertura do container UFDR
+6. Parsing resiliente de XML/model graph
+7. Persistencia de aparelho, chats, participantes, mensagens, anexos, contatos, chamadas, localizacoes e entidades
+8. Indexacao em OpenSearch
+9. Atualizacao de progresso em `Extraction.processingDetails`
+10. Finalizacao com evento de custodia
 
-Migrations criadas:
+O sistema suporta extracoes sem `report.xml` quando consegue extrair dados relevantes do UFDR/model graph.
 
-- `0001_init`
-- `0002_audio_transcription`
+## 4. Audios e transcricoes
 
-## 4) Fluxo UFDR implementado (end-to-end)
+Implementado:
 
-Fluxo funcional:
+- extracao de audios do UFDR em area derivada
+- criacao de `Attachment` e `AudioTranscription`
+- fila `audio-transcription`
+- transcricao por engine local, OpenAI ou AssemblyAI
+- fallback local quando AssemblyAI falha por billing/quota
+- transcricao de `.opus` mesmo quando nao ha chat vinculado
+- classificacao de transcricoes por IA
+- injecao opcional da transcricao no corpo da mensagem vinculada
+- limpeza automatica de jobs com falha permanente
 
-1. Upload de `.ufdr` via web (`/api/upload-ufdr`)
-2. Cálculo de hash SHA-256
-3. Armazenamento do original no storage local
-4. Registro de `Evidence` + `Extraction`
-5. Enfileiramento de job BullMQ (`ingest-ufdr`)
-6. `worker-ingest` abre UFDR como pacote compactado
-7. Procura `report.xml`
-8. Se não encontrar: marca `Extraction` como `FAILED` com erro detalhado
-9. Se encontrar: parse inicial de `report.xml` (modular, resiliente)
-10. Persistência de dados normalizados iniciais (device/chats/messages/artifacts)
-11. Indexação inicial no OpenSearch (mensagens)
-12. Atualização de status final de extração
+Politica atual:
 
-## 5) Parser UFDR (modular e desacoplado)
+- somente `.opus` e transcrito no fluxo principal
+- arquivos nao `.opus` ficam como `FAILED` por politica no banco
+- falhas permanentes nao deixam jobs sujos na fila
+- falhas por credito/quota permanecem para retry apos regularizacao
 
-Implementado em `packages/parsers`:
+## 5. OCR e arquivos auditaveis
 
-- scanner de container UFDR (zip)
-- leitura de `report.xml`
-- normalização tipada com Zod
-- extração de artefatos de áudio para pipeline de transcrição
+Implementado:
 
-Parser não depende de Prisma diretamente (persistência separada em `packages/cases`).
+- indexacao de caminhos de anexos
+- extracao de cache auditavel
+- classificacao de qualidade de imagens, PDFs e videos
+- descarte de figurinhas, icones, thumbnails e arquivos pequenos/baixa qualidade
+- fila `ocr-documents`
+- OCR local com Tesseract
+- fallback de idioma para `eng`/padrao quando o idioma solicitado nao existe
+- classificacao de OCR por IA
+- filtros de arquivos `Auditaveis`, `Revisao`, `Indexados`, `Excluidos` e `Pendentes`
 
-## 6) Transcrição local de áudio (obrigatória)
+## 6. Busca investigativa
 
-Implementado pipeline completo com Whisper local:
+Implementado em `/analysis/search`:
 
-- `worker-ingest` extrai áudios do UFDR para área derivada
-- cria `Attachment` + `AudioTranscription` (`PENDING`)
-- enfileira jobs em `audio-transcription`
-- `worker-ai` executa Whisper local (`WHISPER_BIN`, `WHISPER_MODEL`)
-- salva transcrição (`text`, `segments`) e status (`PROCESSING`, `COMPLETED`, `FAILED`)
+- busca full-text em mensagens, chats, entidades, anexos, chamadas e arquivos
+- filtros por caso, evidencia e extracao
+- resultados em cartoes navegaveis
+- botoes para abrir caso, evidencia, extracao e modulo de analise em nova aba
+- enriquecimento de contatos com telefone derivado de `phone`, `handle`, `externalId` e `@s.whatsapp.net`
+- acesso rapido a mensagens/chats relacionados
 
-## 7) Vínculo automático áudio <-> mensagens/chats
+## 7. Mensagens e participantes
 
-Vinculação automática implementada com estratégia e score:
+Implementado em `/analysis/messages`:
 
-- `direct-id`
-- `hint-id`
-- `timestamp-nearest`
-- `chat-fallback`
-- `unlinked`
+- filtros por plataforma, caso, extracao e termo
+- lista lateral de chats
+- painel de conversa com mensagens, anexos e transcricoes
+- exibicao de telefones/WhatsApp dos participantes
+- derivacao de telefone a partir de identificadores WhatsApp
 
-Metadados de auditoria persistidos em `Attachment.metadata.linkage`:
+## 8. Localizacoes
 
-- estratégia
-- score
-- ids candidatos
-- timestamp da ligação
+Implementado em `/analysis/locations`:
 
-Resumo agregado também salvo em `Extraction.processingDetails.audioLinkageSummary`.
+- listagem de artefatos `LOCATION`
+- filtro por caso e extracao
+- abertura direta de coordenada no Google Maps
+- exportacao KML por evidencia/recorte filtrado
+- uso de latitude/longitude em metadata (`latitude`, `longitude`, `lat`, `lng`, `lon`)
 
-## 8) Busca e indexação
+## 9. Analise de IA
 
-`packages/search` implementado com:
+Implementado em `/analysis/ai`:
 
-- criação de índices iniciais
-- indexação de mensagens extraídas
-- busca investigativa com full-text + filtros base
+- estimativa de triagem
+- execucao de triagem investigativa
+- classificacao de chats por relevancia (`alta`, `media`, `baixa`)
+- correlacoes entre chats
+- selecao de chats relevantes
+- recuperacao de job ativo ao clicar em carregar ultima triagem
+- progresso real consultado em BullMQ sem cache
+- sanitizacao de payloads antes de gravar em PostgreSQL para remover `\u0000` e Unicode invalido
 
-Tela inicial de busca no web app:
+## 10. Relatorios
 
-- `/search`
+Implementado:
 
-## 9) Interface web MVP
+- relatorio consolidado por caso/evidencia
+- inclusao de chats selecionados na triagem
+- nomes e telefones/WhatsApp dos interlocutores
+- trechos relevantes de mensagens
+- arquivos auditaveis triados
+- audios `.opus` sem chat selecionados pelo analista
+- transcricao e analise de IA desses audios
+- localizacoes disponiveis
+- metadados de rastreabilidade
 
-Telas criadas:
+## 11. Operacoes e filas
 
-- `/dashboard`
-- `/cases`
-- `/cases/[id]`
-- `/evidences`
-- `/evidences/[id]`
-- `/extractions`
-- `/extractions/[id]`
-- `/search`
-- `/chats`
-- `/messages`
-- `/timeline`
+Filas principais:
 
-## 10) Progresso do processamento (UI)
+- `local-ufdr-import`
+- `ingest-ufdr`
+- `audio-recovery-batch`
+- `audio-recovery-finalize`
+- `audio-transcription`
+- `ocr-documents`
+- `ai-classification`
+- `investigation-triage`
+- `investigation-report`
 
-Implementado acompanhamento com barra de progresso:
+Implementado em `/settings/operations`:
 
-- progresso por fases no `worker-ingest` (`processingDetails.phase/progress`)
-- endpoint de status:
-  - `/api/extractions/[id]/status`
-- stream em tempo real com SSE:
-  - `/api/extractions/[id]/stream`
-- frontend com atualização ao vivo via `EventSource`
-- fallback automático para polling
+- visualizacao de jobs ativos, aguardando, pausados, falhados e atrasados
+- retry/remocao de jobs
+- pausar/retomar fila
+- limpeza de jobs pausados antigos
+- remocao por referencia/caso/evidencia/extracao
 
-## 11) Validação e build
+## 12. Integracoes e politica operacional
 
-Já validado localmente:
+- CORE Hub export existe, mas e acao manual/discricionaria do analista.
+- OpenAI API key pode ser configurada por settings criptografadas.
+- Tesseract e Whisper podem ser configurados por variaveis de ambiente.
+- Workers sao responsaveis por processamento pesado; a UI apenas enfileira e acompanha.
 
-- `npm install`
-- `npm run db:generate`
-- `npm run typecheck`
-- `npm run build`
+## 13. Validacao usual
 
-## 12) Configuração de ambiente
+Comandos principais:
 
-Variáveis principais em `.env.example` incluindo:
+```bash
+npm run typecheck --workspace @core/web
+npm run typecheck --workspace @core/worker-ai
+npm run typecheck --workspace @core/cases
+npm run typecheck --workspace @core/reports
+```
 
-- banco (`DATABASE_URL`)
-- fila (`REDIS_URL`)
-- busca (`OPENSEARCH_URL`)
-- storage (`STORAGE_ROOT`, `STORAGE_DRIVER`)
-- Whisper local (`WHISPER_BIN`, `WHISPER_MODEL`)
+Para desenvolvimento completo:
 
----
+```bash
+npm run dev
+```
 
-Resumo técnico: o projeto já está com base funcional para ingestão UFDR especializada, parsing inicial, indexação, transcrição local de áudio com vínculo investigativo auditável e monitoramento de progresso em tempo real.
+Para web isolado:
+
+```bash
+npm run dev:web
+```

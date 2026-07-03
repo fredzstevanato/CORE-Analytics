@@ -6,27 +6,13 @@ export const runtime = "nodejs";
 
 const PICK_TIMEOUT_MS = 5 * 60 * 1000;
 
-function pickUfdrFileOnWindows(): Promise<{ filePath: string } | { cancelled: true }> {
-  const script = `
-Add-Type -AssemblyName System.Windows.Forms
-$dialog = New-Object System.Windows.Forms.OpenFileDialog
-$dialog.Title = "Selecionar arquivo UFDR"
-$dialog.Filter = "UFDR (*.ufdr)|*.ufdr|Todos os arquivos (*.*)|*.*"
-$dialog.Multiselect = $false
-$result = $dialog.ShowDialog()
-if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $dialog.FileName) {
-  Write-Output $dialog.FileName
-  exit 0
+function sourceRoot() {
+  return process.env.UFDR_SOURCE_ROOT?.trim() || process.env.STORAGE_ROOT?.trim() || process.cwd();
 }
-exit 10
-`;
 
+function runPicker(command: string, args: string[]): Promise<{ filePath: string } | { cancelled: true }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      "powershell",
-      ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
-      { windowsHide: false }
-    );
+    const child = spawn(command, args, { windowsHide: false });
 
     let stdout = "";
     let stderr = "";
@@ -56,7 +42,7 @@ exit 10
         resolve({ filePath });
         return;
       }
-      if (code === 10) {
+      if (code === 1 || code === 10) {
         resolve({ cancelled: true });
         return;
       }
@@ -65,19 +51,57 @@ exit 10
   });
 }
 
+function pickUfdrFileOnWindows(): Promise<{ filePath: string } | { cancelled: true }> {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = "Selecionar arquivo UFDR"
+$dialog.Filter = "UFDR (*.ufdr)|*.ufdr|Todos os arquivos (*.*)|*.*"
+$dialog.Multiselect = $false
+$result = $dialog.ShowDialog()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $dialog.FileName) {
+  Write-Output $dialog.FileName
+  exit 0
+}
+exit 10
+`;
+
+  return runPicker("powershell", ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script]);
+}
+
+async function pickUfdrFileOnLinux(): Promise<{ filePath: string } | { cancelled: true }> {
+  const initialPath = sourceRoot();
+  const attempts: Array<[string, string[]]> = [
+    ["zenity", ["--file-selection", "--title=Selecionar arquivo UFDR", "--file-filter=UFDR (*.ufdr) | *.ufdr", `--filename=${initialPath}/`]],
+    ["kdialog", ["--title", "Selecionar arquivo UFDR", "--getopenfilename", initialPath, "*.ufdr"]],
+    ["yad", ["--file-selection", "--title=Selecionar arquivo UFDR", "--file-filter=UFDR (*.ufdr) | *.ufdr", `--filename=${initialPath}/`]]
+  ];
+  const errors: string[] = [];
+
+  for (const [command, args] of attempts) {
+    try {
+      return await runPicker(command, args);
+    } catch (error) {
+      errors.push(`${command}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  throw new Error(
+    `Nenhum seletor grafico Linux disponivel para escolher UFDR. Instale zenity, kdialog ou yad; ou informe o caminho absoluto manualmente. Tentativas: ${errors.join(" | ")}`
+  );
+}
+
 export async function POST() {
   try {
     const auth = await requireApiSession();
     if ("error" in auth) return auth.error;
 
-    if (process.platform !== "win32") {
-      return NextResponse.json(
-        { error: "Seletor nativo disponivel apenas no Windows neste ambiente." },
-        { status: 409 }
-      );
-    }
-
-    const result = await pickUfdrFileOnWindows();
+    const result =
+      process.platform === "win32"
+        ? await pickUfdrFileOnWindows()
+        : process.platform === "linux"
+          ? await pickUfdrFileOnLinux()
+          : await Promise.reject(new Error("Seletor nativo suportado apenas em Windows e Linux."));
     if ("cancelled" in result) {
       return NextResponse.json({ cancelled: true }, { status: 200 });
     }

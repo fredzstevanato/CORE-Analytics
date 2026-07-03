@@ -52,6 +52,7 @@ export function OperationsJobsPanel() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [queueFilter, setQueueFilter] = useState<string>("ALL");
   const [referenceFilter, setReferenceFilter] = useState("");
+  const [pausedMaxAgeHours, setPausedMaxAgeHours] = useState(24);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [selectedJobs, setSelectedJobs] = useState<Record<string, boolean>>({});
 
@@ -65,7 +66,7 @@ export function OperationsJobsPanel() {
     try {
       const url = new URL("/api/ops/jobs", window.location.origin);
       url.searchParams.set("limit", "40");
-      url.searchParams.set("statuses", "active,waiting,delayed,prioritized,failed");
+      url.searchParams.set("statuses", "active,waiting,delayed,prioritized,paused,failed");
       if (queueFilter !== "ALL") url.searchParams.set("queue", queueFilter);
 
       const response = await fetch(url.toString(), { cache: "no-store" });
@@ -88,9 +89,11 @@ export function OperationsJobsPanel() {
       | "pause_queue"
       | "resume_queue"
       | "stop_by_reference"
-      | "remove_by_reference";
+      | "remove_by_reference"
+      | "clean_old_paused";
     jobId?: string;
     referenceLabel?: string;
+    maxAgeHours?: number;
   }) {
     const response = await fetch("/api/ops/jobs", {
       method: "POST",
@@ -100,6 +103,32 @@ export function OperationsJobsPanel() {
     const payload = (await response.json()) as { error?: string; message?: string };
     if (!response.ok) throw new Error(payload.error ?? "Acao nao executada.");
     return payload;
+  }
+
+  async function runCleanOldPaused() {
+    const scope = queueFilter === "ALL" ? "todas as filas" : `a fila ${queueFilter}`;
+    const confirmed = window.confirm(
+      `Remover jobs pausados em ${scope} com mais de ${pausedMaxAgeHours}h? Jobs ativos/em espera recentes serao preservados.`
+    );
+    if (!confirmed) return;
+
+    setActionBusy("clean_old_paused");
+    setError(null);
+    setNotice(null);
+    try {
+      const payload = await callAction({
+        queue: queueFilter === "ALL" ? "" : queueFilter,
+        action: "clean_old_paused",
+        maxAgeHours: pausedMaxAgeHours
+      });
+      if (payload.message) setNotice(payload.message);
+      setSelectedJobs({});
+      await load();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Limpeza de pausados nao executada.");
+    } finally {
+      setActionBusy(null);
+    }
   }
 
   async function runAction(input: { queue: string; action: "stop" | "remove" | "retry" | "pause_queue" | "resume_queue"; jobId?: string }) {
@@ -289,6 +318,29 @@ export function OperationsJobsPanel() {
         </Button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 p-2">
+        <span className="text-xs font-medium text-amber-900">Manutencao de pausados</span>
+        <label className="text-xs text-amber-900">Mais antigos que:</label>
+        <input
+          type="number"
+          min={1}
+          max={720}
+          value={pausedMaxAgeHours}
+          onChange={(event) => setPausedMaxAgeHours(Math.max(1, Math.min(720, Number(event.target.value) || 24)))}
+          className="w-20 rounded border border-amber-300 px-2 py-1 text-xs"
+        />
+        <span className="text-xs text-amber-900">horas</span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={actionBusy === "clean_old_paused"}
+          onClick={() => void runCleanOldPaused()}
+        >
+          {actionBusy === "clean_old_paused" ? "Limpando pausados..." : "Limpar pausados antigos"}
+        </Button>
+      </div>
+
       {data ? <p className="text-xs text-zinc-500">Ultima leitura: {new Date(data.timestamp).toLocaleString("pt-BR")}</p> : null}
       {notice ? <p className="text-xs text-emerald-700">{notice}</p> : null}
       {error ? <p className="text-xs text-red-700">{error}</p> : null}
@@ -311,6 +363,7 @@ export function OperationsJobsPanel() {
             <p className="text-xs font-semibold">{queueRow.queue}</p>
             <span className="text-xs text-zinc-600">
               workers {queueRow.workers} | waiting {queueRow.counts.waiting ?? 0} | active {queueRow.counts.active ?? 0} | failed {queueRow.counts.failed ?? 0}
+              {" "} | paused {queueRow.counts.paused ?? 0}
             </span>
             <span className={`rounded px-2 py-0.5 text-[11px] ${queueRow.paused ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
               {queueRow.paused ? "PAUSADA" : "ATIVA"}

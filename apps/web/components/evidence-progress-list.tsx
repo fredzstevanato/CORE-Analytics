@@ -369,7 +369,7 @@ function EvidenceRow({ item }: { item: EvidenceItem }) {
     useAutomatedChain<ActionStep>({
       evidenceId: item.id,
       steps: AUTO_CHAIN_STEPS,
-      shouldAutoStart: Boolean(state && (state.status === "COMPLETED" || state.status === "FAILED")),
+      shouldAutoStart: false,
       runStep: runAutomatedStep,
       onStepError: (step, error) => {
         setActionError(

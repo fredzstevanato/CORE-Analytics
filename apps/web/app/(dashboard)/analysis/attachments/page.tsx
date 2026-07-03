@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 const PAGE_SIZE = 80;
 
 type MediaFilter = "all" | "documents" | "images" | "videos";
-type StatusFilter = "all" | "indexed" | "excluded" | "pending";
+type StatusFilter = "all" | "auditable" | "reviewable" | "indexed" | "excluded" | "pending";
 
 type PageProps = {
   searchParams: Promise<{
@@ -36,7 +36,15 @@ function parseMedia(input?: string): MediaFilter {
 }
 
 function parseStatus(input?: string): StatusFilter {
-  if (input === "indexed" || input === "excluded" || input === "pending") return input;
+  if (
+    input === "auditable" ||
+    input === "reviewable" ||
+    input === "indexed" ||
+    input === "excluded" ||
+    input === "pending"
+  ) {
+    return input;
+  }
   return "all";
 }
 
@@ -127,6 +135,22 @@ function mediaWhereFilter(media: MediaFilter): Prisma.AttachmentWhereInput {
 }
 
 function statusWhereFilter(status: StatusFilter): Prisma.AttachmentWhereInput {
+  if (status === "auditable") {
+    return {
+      metadata: {
+        path: ["quality", "status"],
+        equals: "AUDITABLE"
+      }
+    };
+  }
+  if (status === "reviewable") {
+    return {
+      metadata: {
+        path: ["quality", "status"],
+        equals: "REVIEWABLE"
+      }
+    };
+  }
   if (status === "indexed") {
     return {
       AND: [{ archivePath: { not: null } }, { archivePath: { not: "" } }]
@@ -182,7 +206,11 @@ function detectCategory(row: { fileName?: string | null; archivePath?: string | 
   const mime = (row.mimeType ?? "").toLowerCase();
   const ref = `${row.fileName ?? ""} ${row.archivePath ?? ""}`.toLowerCase();
   if (mime.startsWith("video/") || /\.(mp4|mov|m4v|mkv|3gp|webm|avi)$/.test(ref)) return "Video";
-  if (mime.startsWith("image/") || /\.(png|jpe?g|webp|bmp|heic|heif|gif)$/.test(ref)) return "Imagem";
+  if (mime === "video") return "Video";
+  if (mime === "image" || mime.startsWith("image/") || /\.(png|jpe?g|webp|bmp|heic|heif|gif)$/.test(ref)) return "Imagem";
+  if (mime === "voice message" || mime.startsWith("audio/") || /\.(aac|amr|flac|m4a|mp3|ogg|opus|wav|wma)$/.test(ref)) {
+    return "Audio";
+  }
   return "Documento";
 }
 
@@ -213,6 +241,19 @@ function readRecoveryStatus(metadata: unknown): { excluded: boolean; reason?: st
   return {
     excluded: recovery.excluded === true,
     reason: typeof recovery.reason === "string" ? recovery.reason : undefined
+  };
+}
+
+function readQualityStatus(metadata: unknown): { status?: string; reason?: string; score?: number } {
+  const row = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? (metadata as Record<string, unknown>) : {};
+  const quality =
+    row.quality && typeof row.quality === "object" && !Array.isArray(row.quality)
+      ? (row.quality as Record<string, unknown>)
+      : {};
+  return {
+    status: typeof quality.status === "string" ? quality.status : undefined,
+    reason: typeof quality.reason === "string" ? quality.reason : undefined,
+    score: typeof quality.score === "number" ? quality.score : undefined
   };
 }
 
@@ -265,11 +306,37 @@ export default async function AnalysisAttachmentsPage({ searchParams }: PageProp
     ]
   };
 
-  const [total, totalDocuments, totalImages, totalVideos, indexedCount, excludedCount, rows] = await Promise.all([
+  const [total, totalDocuments, totalImages, totalVideos, auditableCount, reviewableCount, indexedCount, excludedCount, rows] = await Promise.all([
     prisma.attachment.count({ where }),
     prisma.attachment.count({ where: { AND: [baseScopeWhere, documentWhereFilter()] } }),
     prisma.attachment.count({ where: { AND: [baseScopeWhere, imageWhereFilter()] } }),
     prisma.attachment.count({ where: { AND: [baseScopeWhere, videoWhereFilter()] } }),
+    prisma.attachment.count({
+      where: {
+        AND: [
+          where,
+          {
+            metadata: {
+              path: ["quality", "status"],
+              equals: "AUDITABLE"
+            }
+          }
+        ]
+      }
+    }),
+    prisma.attachment.count({
+      where: {
+        AND: [
+          where,
+          {
+            metadata: {
+              path: ["quality", "status"],
+              equals: "REVIEWABLE"
+            }
+          }
+        ]
+      }
+    }),
     prisma.attachment.count({
       where: {
         AND: [where, { archivePath: { not: null } }, { archivePath: { not: "" } }]
@@ -403,6 +470,8 @@ export default async function AnalysisAttachmentsPage({ searchParams }: PageProp
 
             <select name="status" defaultValue={status} className="h-10 rounded-md border border-zinc-300 px-3 text-sm">
               <option value="all">Todos os status</option>
+              <option value="auditable">Auditaveis</option>
+              <option value="reviewable">Revisao</option>
               <option value="indexed">Indexados</option>
               <option value="excluded">Excluidos por politica</option>
               <option value="pending">Pendentes</option>
@@ -427,6 +496,14 @@ export default async function AnalysisAttachmentsPage({ searchParams }: PageProp
             <div className="rounded border border-zinc-200 bg-zinc-50 p-2 text-sm">
               <p className="text-xs text-zinc-500">Videos</p>
               <p className="text-lg font-semibold text-zinc-900">{totalVideos}</p>
+            </div>
+            <div className="rounded border border-zinc-200 bg-zinc-50 p-2 text-sm">
+              <p className="text-xs text-zinc-500">Auditaveis</p>
+              <p className="text-lg font-semibold text-zinc-900">{auditableCount}</p>
+            </div>
+            <div className="rounded border border-zinc-200 bg-zinc-50 p-2 text-sm">
+              <p className="text-xs text-zinc-500">Revisao</p>
+              <p className="text-lg font-semibold text-zinc-900">{reviewableCount}</p>
             </div>
             <div className="rounded border border-zinc-200 bg-zinc-50 p-2 text-sm">
               <p className="text-xs text-zinc-500">Indexados</p>
@@ -456,9 +533,12 @@ export default async function AnalysisAttachmentsPage({ searchParams }: PageProp
           {rows.map((row) => {
             const category = detectCategory(row);
             const recovery = readRecoveryStatus(row.metadata);
+            const quality = readQualityStatus(row.metadata);
             const indexed = Boolean(row.archivePath && row.archivePath.trim().length > 0);
             const canOpen = indexed && !recovery.excluded;
             const statusLabel = recovery.excluded ? "Excluido" : indexed ? "Indexado" : "Pendente";
+            const qualityLabel =
+              quality.status === "AUDITABLE" ? "Auditavel" : quality.status === "REVIEWABLE" ? "Revisao" : quality.status === "DISCARDED" ? "Descartado" : null;
             return (
               <article key={row.id} className="space-y-2 rounded-lg border border-zinc-200 bg-white p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -473,6 +553,20 @@ export default async function AnalysisAttachmentsPage({ searchParams }: PageProp
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <span className="rounded border border-zinc-300 bg-zinc-100 px-2 py-1 text-zinc-700">{category}</span>
+                    {qualityLabel ? (
+                      <span
+                        className={`rounded border px-2 py-1 ${
+                          quality.status === "AUDITABLE"
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                            : quality.status === "REVIEWABLE"
+                              ? "border-sky-300 bg-sky-50 text-sky-700"
+                              : "border-zinc-300 bg-zinc-100 text-zinc-600"
+                        }`}
+                      >
+                        {qualityLabel}
+                        {typeof quality.score === "number" ? ` ${Math.round(quality.score * 100)}%` : ""}
+                      </span>
+                    ) : null}
                     <span
                       className={`rounded border px-2 py-1 ${
                         recovery.excluded
@@ -517,6 +611,7 @@ export default async function AnalysisAttachmentsPage({ searchParams }: PageProp
 
                 {row.archivePath ? <p className="text-xs text-zinc-600">Caminho indexado: {row.archivePath}</p> : null}
                 {recovery.reason ? <p className="text-xs text-rose-700">Motivo da exclusao: {recovery.reason}</p> : null}
+                {quality.reason ? <p className="text-xs text-zinc-600">Qualidade: {quality.reason}</p> : null}
 
                 {canOpen && isImage(row) ? (
                   <img

@@ -628,6 +628,7 @@ function buildInvestigativeReportContent(input: {
     evidenceSha256?: string | null;
   };
   chatsSection: string;
+  unlinkedAudioSection: string;
 }) {
   const dateLabel = new Date().toLocaleDateString("pt-BR");
   const headerLine = [
@@ -694,7 +695,9 @@ function buildInvestigativeReportContent(input: {
     "",
     input.chatsSection.trim(),
     "",
-    "## 7. CONCLUSAO TECNICA",
+    input.unlinkedAudioSection.trim(),
+    "",
+    "## 8. CONCLUSAO TECNICA",
     "",
     compactParagraph(
       input.narrative.conclusaoTecnica,
@@ -713,16 +716,18 @@ function buildReportReuseSignature(input: {
   reportModel: string;
   triageGeneratedAt: string;
   selectedChatIds: string[];
+  selectedUnlinkedAudioIds?: string[];
   contextHint?: string | null;
 }) {
   const serialized = JSON.stringify({
-    reportStructureVersion: 2,
+    reportStructureVersion: 3,
     caseId: input.caseId,
     evidenceId: input.evidenceId ?? null,
     provider: input.provider,
     reportModel: input.reportModel,
     triageGeneratedAt: input.triageGeneratedAt,
     selectedChatIds: [...input.selectedChatIds].sort(),
+    selectedUnlinkedAudioIds: [...(input.selectedUnlinkedAudioIds ?? [])].sort(),
     contextHint: normalizeOptionalText(input.contextHint) ?? null
   });
   return createHash("sha256").update(serialized).digest("hex").slice(0, 24);
@@ -1468,15 +1473,15 @@ export async function runCaseInvestigativeTriage(input: {
       caseId: input.caseId,
       evidenceId: input.evidenceId,
       type: "INVESTIGATION_TRIAGE",
-      title: `Triagem investigativa (${new Date().toLocaleString("pt-BR")})`,
-      summary: `Chats avaliados: ${assessments.length}. Alta: ${highCount}. Media: ${mediumCount}.`,
+      title: sanitizeTextForDatabase(`Triagem investigativa (${new Date().toLocaleString("pt-BR")})`),
+      summary: sanitizeTextForDatabase(`Chats avaliados: ${assessments.length}. Alta: ${highCount}. Media: ${mediumCount}.`),
       score: highCount + mediumCount / 2,
-      metadata: {
+      metadata: sanitizeJsonForDatabase({
         ...payload,
         analysisModel: input.analysisModel,
         provider: aiEngine,
         contextHint: normalizedContextHint
-      } as Prisma.InputJsonValue
+      }) as Prisma.InputJsonValue
     }
   });
 
@@ -2174,6 +2179,94 @@ function buildSelectedChatEvidenceSection(input: {
   return lines.join("\n");
 }
 
+function readSelectedAttachmentIdsFromAudioSelection(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
+  const raw = (metadata as Record<string, unknown>).selectedAttachmentIds;
+  return [...new Set(toStringArray(raw))];
+}
+
+function readInsightTags(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
+  return toStringArray((metadata as Record<string, unknown>).tags);
+}
+
+function buildUnlinkedAudioEvidenceSection(input: {
+  selectedAttachmentIds: string[];
+  audios: Array<{
+    id: string;
+    fileName: string | null;
+    archivePath: string | null;
+    transcriptions: Array<{
+      id: string;
+      text: string | null;
+      engine: string;
+      createdAt: Date;
+      finishedAt: Date | null;
+    }>;
+  }>;
+  insightByTranscriptionId: Map<
+    string,
+    {
+      title: string;
+      summary: string;
+      score: number | null;
+      metadata: Prisma.JsonValue | null;
+    }
+  >;
+}) {
+  const lines: string[] = [
+    "## 7. AUDIOS SEM VINCULO COM CHAT SELECIONADOS PARA ANALISE",
+    "",
+    "Esta secao consolida audios .opus sem vinculacao com chat que foram selecionados pelo analista para constar no relatorio final.",
+    ""
+  ];
+
+  if (input.selectedAttachmentIds.length === 0) {
+    lines.push("Nenhum audio sem vinculo com chat foi selecionado para este relatorio.");
+    lines.push("");
+    return lines.join("\n");
+  }
+
+  const audioById = new Map(input.audios.map((audio) => [audio.id, audio]));
+  input.selectedAttachmentIds.forEach((attachmentId, index) => {
+    const audio = audioById.get(attachmentId);
+    const label = audio?.fileName?.trim() || audio?.archivePath?.split(/[\\/]/).pop() || attachmentId;
+    const transcription = audio?.transcriptions.find((item) => item.text?.trim());
+    const insight = transcription ? input.insightByTranscriptionId.get(transcription.id) : undefined;
+    const tags = readInsightTags(insight?.metadata);
+
+    lines.push(`### 7.${index + 1} Audio selecionado: ${label}`);
+    lines.push("");
+    lines.push(`- Attachment ID: ${attachmentId}`);
+    if (audio?.archivePath) lines.push(`- Caminho no arquivo: ${audio.archivePath}`);
+    if (transcription) {
+      lines.push(`- Transcricao: ${transcription.engine}${transcription.finishedAt ? ` em ${formatMessageTimestamp(transcription.finishedAt)}` : ""}`);
+    } else {
+      lines.push("- Transcricao: nao localizada ou nao concluida.");
+    }
+    if (insight) {
+      lines.push(`- Analise automatica da IA: ${insight.title}`);
+      lines.push(`- Score IA: ${typeof insight.score === "number" ? insight.score.toFixed(2) : "N/D"}`);
+      if (tags.length > 0) lines.push(`- Sinais classificados: ${tags.join(", ")}`);
+    } else {
+      lines.push("- Analise automatica da IA: nao localizada.");
+    }
+    lines.push("");
+    lines.push("Transcricao integral:");
+    lines.push("");
+    lines.push(transcription?.text?.trim() ? truncate(transcription.text, 1800) : "Sem texto de transcricao disponivel.");
+    if (insight?.summary?.trim()) {
+      lines.push("");
+      lines.push("Resumo/trecho classificado pela IA:");
+      lines.push("");
+      lines.push(truncate(insight.summary, 900));
+    }
+    lines.push("");
+  });
+
+  return lines.join("\n");
+}
+
 async function callOpenAiReportConsolidation(input: {
   apiKey: string;
   model: string;
@@ -2747,6 +2840,17 @@ export async function generateInvestigativeReport(input: {
     .filter((item) => selected.some((row) => row.chatId === item.sourceChatId || row.chatId === item.targetChatId))
     .slice(0, REPORT_MAX_CORRELATIONS);
 
+  const latestUnlinkedAudioSelection = await prisma.aiInsight.findFirst({
+    where: {
+      caseId: input.caseId,
+      type: "AUDIO_UNLINKED_SELECTION",
+      ...(input.evidenceId ? { evidenceId: input.evidenceId } : {})
+    },
+    orderBy: { createdAt: "desc" },
+    select: { metadata: true }
+  });
+  const selectedUnlinkedAudioIds = readSelectedAttachmentIdsFromAudioSelection(latestUnlinkedAudioSelection?.metadata);
+
   const reportSignature = buildReportReuseSignature({
     caseId: input.caseId,
     evidenceId: input.evidenceId,
@@ -2754,6 +2858,7 @@ export async function generateInvestigativeReport(input: {
     reportModel: input.reportModel,
     triageGeneratedAt: triage.generatedAt,
     selectedChatIds: selected.map((item) => item.chatId),
+    selectedUnlinkedAudioIds,
     contextHint: normalizedContextHint
   });
 
@@ -2793,6 +2898,78 @@ export async function generateInvestigativeReport(input: {
     selected.slice(0, 40).map((item) => loadChatForInvestigation({ caseId: input.caseId, chatId: item.chatId }))
   );
   const selectedChats = selectedChatsRaw.filter((chat): chat is NonNullable<typeof chat> => Boolean(chat));
+
+  const selectedUnlinkedAudios =
+    selectedUnlinkedAudioIds.length > 0
+      ? await prisma.attachment.findMany({
+          where: {
+            id: { in: selectedUnlinkedAudioIds },
+            caseId: input.caseId,
+            ...(input.evidenceId ? { evidenceId: input.evidenceId } : {}),
+            messageId: null,
+            OR: [
+              { fileName: { endsWith: ".opus", mode: "insensitive" } },
+              { archivePath: { endsWith: ".opus", mode: "insensitive" } }
+            ]
+          },
+          select: {
+            id: true,
+            fileName: true,
+            archivePath: true,
+            transcriptions: {
+              where: {
+                status: "COMPLETED",
+                text: { not: null }
+              },
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: {
+                id: true,
+                text: true,
+                engine: true,
+                createdAt: true,
+                finishedAt: true
+              }
+            }
+          }
+        })
+      : [];
+
+  const selectedUnlinkedTranscriptionIds = selectedUnlinkedAudios.flatMap((audio) =>
+    audio.transcriptions.map((transcription) => transcription.id)
+  );
+  const unlinkedAudioInsights =
+    selectedUnlinkedTranscriptionIds.length > 0
+      ? await prisma.aiInsight.findMany({
+          where: {
+            type: "TRANSCRIPTION",
+            OR: selectedUnlinkedTranscriptionIds.map((id) => ({
+              metadata: {
+                path: ["sourceId"],
+                equals: id
+              }
+            }))
+          },
+          orderBy: { createdAt: "desc" },
+          take: selectedUnlinkedTranscriptionIds.length * 3,
+          select: {
+            title: true,
+            summary: true,
+            score: true,
+            metadata: true
+          }
+        })
+      : [];
+  const unlinkedAudioInsightByTranscriptionId = new Map<string, (typeof unlinkedAudioInsights)[number]>();
+  for (const insight of unlinkedAudioInsights) {
+    const metadata = insight.metadata && typeof insight.metadata === "object" && !Array.isArray(insight.metadata)
+      ? (insight.metadata as Record<string, unknown>)
+      : {};
+    const sourceId = metadata.sourceId;
+    if (typeof sourceId === "string" && !unlinkedAudioInsightByTranscriptionId.has(sourceId)) {
+      unlinkedAudioInsightByTranscriptionId.set(sourceId, insight);
+    }
+  }
 
   const [
     totalEvidences,
@@ -2920,6 +3097,11 @@ export async function generateInvestigativeReport(input: {
     introSummary: chatIntroSummary,
     consideracoesFinais: narrativeSections.consideracoesFinaisChats
   });
+  const unlinkedAudioSection = buildUnlinkedAudioEvidenceSection({
+    selectedAttachmentIds: selectedUnlinkedAudioIds,
+    audios: selectedUnlinkedAudios,
+    insightByTranscriptionId: unlinkedAudioInsightByTranscriptionId
+  });
 
   const content = buildInvestigativeReportContent({
     caseNumber: caseRow.caseNumber,
@@ -2937,7 +3119,8 @@ export async function generateInvestigativeReport(input: {
       evidenceFileName: extractionRow?.evidence?.fileName,
       evidenceSha256: extractionRow?.evidence?.sha256
     },
-    chatsSection: selectedChatEvidenceSection
+    chatsSection: selectedChatEvidenceSection,
+    unlinkedAudioSection
   });
 
   const report = await prisma.generatedReport.create({
@@ -2955,6 +3138,7 @@ export async function generateInvestigativeReport(input: {
         triageGeneratedAt: triage.generatedAt,
         triageInsightId: input.triageInsightId ?? null,
         selectedChatIds: selected.map((item) => item.chatId),
+        selectedUnlinkedAudioIds,
         contextHint: normalizedContextHint,
         reportSignature,
         workflow: {
@@ -2987,7 +3171,8 @@ export async function generateInvestigativeReport(input: {
         reportId: report.id,
         provider: aiEngine,
         reportModel: input.reportModel,
-        selectedChatIds: selected.map((item) => item.chatId)
+        selectedChatIds: selected.map((item) => item.chatId),
+        selectedUnlinkedAudioIds
       } as Prisma.InputJsonValue
     }
   });

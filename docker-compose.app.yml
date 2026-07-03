@@ -40,7 +40,7 @@ services:
     ports:
       - "${WEB_PORT:-3001}:3001"
     volumes:
-      - core_storage:/data/storage
+      - ${STORAGE_ROOT:-./storage}:/data/storage
       - ${UFDR_SOURCE_ROOT:-./storage/ufdr-imports}:/mnt/ufdr:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3001/api/health >/dev/null || exit 1"]
@@ -68,7 +68,7 @@ services:
       opensearch:
         condition: service_healthy
     volumes:
-      - core_storage:/data/storage
+      - ${STORAGE_ROOT:-./storage}:/data/storage
       - ${UFDR_SOURCE_ROOT:-./storage/ufdr-imports}:/mnt/ufdr:ro
 
   worker-ai:
@@ -92,7 +92,4 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - core_storage:/data/storage
-
-volumes:
-  core_storage:
+      - ${STORAGE_ROOT:-./storage}:/data/storage

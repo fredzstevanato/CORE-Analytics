@@ -91,8 +91,28 @@ function isTerminalTranscriptionError(error: unknown) {
     message.includes("bytes=0") ||
     message.includes("arquivo opus invalido") ||
     message.includes("corrompido para transcricao") ||
+    message.includes("audio file might be corrupted or unsupported") ||
+    message.includes("audio file is corrupted or unsupported") ||
     message.includes("invalid data found when processing input") ||
     message.includes("falha ao converter audio para openai")
+  );
+}
+
+function isBillingOrQuotaError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("quota") ||
+    message.includes("billing") ||
+    message.includes("credit") ||
+    message.includes("credits") ||
+    message.includes("insufficient_quota") ||
+    message.includes("insufficient funds") ||
+    message.includes("not enough") ||
+    message.includes("balance") ||
+    message.includes("prepaid") ||
+    message.includes("payment required") ||
+    message.includes("exceeded your current quota")
   );
 }
 
@@ -160,12 +180,13 @@ async function pruneOrphanTranscriptionJobs(input: {
   maxPerRun?: number;
 }) {
   const maxPerRun = Math.max(1, input.maxPerRun ?? 300);
-  const jobs = await input.queue.getJobs(["waiting", "delayed", "prioritized"], 0, maxPerRun - 1, true);
+  const jobs = await input.queue.getJobs(["waiting", "delayed", "prioritized", "paused"], 0, maxPerRun - 1, true);
   if (jobs.length === 0) return { scanned: 0, removed: 0 };
 
   const candidates = jobs
+    .filter((job): job is NonNullable<typeof job> => Boolean(job))
     .map((job) => ({ job, transcriptionId: job.data?.transcriptionId }))
-    .filter((row): row is { job: (typeof jobs)[number]; transcriptionId: string } => typeof row.transcriptionId === "string");
+    .filter((row): row is { job: NonNullable<(typeof jobs)[number]>; transcriptionId: string } => typeof row.transcriptionId === "string");
 
   if (candidates.length === 0) return { scanned: jobs.length, removed: 0 };
 
@@ -289,22 +310,22 @@ async function processTranscription(jobData: TranscriptionJob) {
 
   const sourceApp = transcriptionContext?.attachment?.message?.chat?.sourceApp;
   const archivePath = transcriptionContext?.attachment?.archivePath;
-  const isEligibleSource = isWhatsAppSourceApp(sourceApp) || isWhatsAppArchivePath(archivePath);
   const isOpus =
     hasOpusExtension(payload.audioAbsolutePath) ||
     hasOpusExtension(transcriptionContext?.attachment?.fileName) ||
     hasOpusExtension(transcriptionContext?.attachment?.archivePath);
-  if (!isEligibleSource || !isOpus) {
+  if (!isOpus) {
     await updateTranscriptionStatus({
       transcriptionId: payload.transcriptionId,
       status: "FAILED",
       fromStatuses: ["PROCESSING"],
-      error: "Descartado pela politica: somente arquivos .opus de chats WhatsApp sao transcritos.",
+      error: "Descartado pela politica: somente arquivos .opus sao transcritos.",
       finishedAt: new Date()
     });
     log("info", "Transcription discarded by policy", {
       transcriptionId: payload.transcriptionId,
       sourceApp: sourceApp ?? null,
+      archivePath: archivePath ?? null,
       audioAbsolutePath: payload.audioAbsolutePath,
       durationMs: Date.now() - startedAtMs
     });
@@ -539,9 +560,23 @@ async function main() {
         finishedAt: new Date()
       });
     }
+    const attemptsLimit = typeof job?.opts.attempts === "number" && job.opts.attempts > 0 ? job.opts.attempts : 1;
+    const isFinalFailure = !job || job.attemptsMade >= attemptsLimit;
+    const shouldKeepForCreditRecovery = isBillingOrQuotaError(error);
+    if (job && isFinalFailure && !shouldKeepForCreditRecovery) {
+      await job.remove().catch((removeError) => {
+        log("warn", "Failed to remove terminal failed transcription job from queue", {
+          jobId: job.id,
+          transcriptionId: job.data?.transcriptionId,
+          error: removeError instanceof Error ? removeError.message : String(removeError)
+        });
+      });
+    }
     log("error", "Transcription failed", {
       transcriptionId: job?.data?.transcriptionId,
-      error: error.message
+      error: error.message,
+      removedFromQueue: Boolean(job && isFinalFailure && !shouldKeepForCreditRecovery),
+      keptForCreditRecovery: shouldKeepForCreditRecovery
     });
   });
 
@@ -574,6 +609,16 @@ async function main() {
         text: ocr.text,
         confidence: ocr.confidence
       });
+      if (ocr.text.trim().length > 0) {
+        await enqueueAiClassification({
+          caseId: payload.caseId,
+          evidenceId: payload.evidenceId,
+          extractionId: payload.extractionId,
+          sourceType: "OCR",
+          sourceId: payload.attachmentId ?? payload.sourcePath,
+          text: ocr.text.slice(0, 12000)
+        });
+      }
       await addCustodyEvent({
         caseId: payload.caseId,
         evidenceId: payload.evidenceId,
@@ -731,7 +776,7 @@ async function main() {
         maxPerRun: 300
       });
       const [transcription, ocr, classification, triage, report] = await Promise.all([
-        transcriptionQueue.getJobCounts("waiting", "active", "delayed", "failed", "completed"),
+        transcriptionQueue.getJobCounts("waiting", "active", "delayed", "paused", "failed", "completed"),
         ocrQueue.getJobCounts("waiting", "active", "delayed", "failed", "completed"),
         classificationQueue.getJobCounts("waiting", "active", "delayed", "failed", "completed"),
         triageQueue.getJobCounts("waiting", "active", "delayed", "failed", "completed"),

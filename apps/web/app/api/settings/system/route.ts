@@ -202,18 +202,18 @@ function buildPathDefaults(targetOs: "windows" | "linux") {
   }
 
   return {
-    STORAGE_ROOT: "/var/lib/core-analytics/storage",
-    UFDR_SOURCE_ROOT: "/mnt/evidencias",
+    STORAGE_ROOT: "/home/fredz/Documentos/CORE-Analytics-storage",
+    UFDR_SOURCE_ROOT: "/home/fredz/Documentos/CORE-Analytics-storage/evidences",
     WHISPER_BIN: "whisper",
-    WHISPER_MODEL_DIR: "/var/lib/core-analytics/storage/models/whisper",
+    WHISPER_MODEL_DIR: "/home/fredz/Documentos/CORE-Analytics-storage/models/whisper",
     FFMPEG_BIN: "ffmpeg",
     TESSERACT_BIN: "tesseract",
     SEVEN_Z_BIN: "7z",
     PDF_OCR_COMMAND: "bash",
     PDF_OCR_COMMAND_ARGS:
       "-lc 'ocrmypdf --force-ocr --language {lang} --pages {pages} {input} {output}'",
-    exampleUfdrFolder: "/mnt/ufdr/EXTRACTI.2026-0001",
-    exampleUfdrFile: "/mnt/ufdr/evidencia.ufdr"
+    exampleUfdrFolder: "/home/fredz/Documentos/CORE-Analytics-storage/evidences/EXTRACTI.2026-0001",
+    exampleUfdrFile: "/home/fredz/Documentos/CORE-Analytics-storage/evidences/evidencia.ufdr"
   };
 }
 

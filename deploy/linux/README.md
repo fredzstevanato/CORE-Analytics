@@ -73,8 +73,8 @@ The normal update flow preserves the Postgres volume. Prisma migrations run
 automatically when the `web` container starts.
 
 Before every manual update, the deployment script creates a PostgreSQL backup.
-To restore one, stop the app containers, copy the dump into `core-postgres`, and
-run `pg_restore`:
+For a logical database-only rollback, stop the app containers, copy the dump into
+`core-postgres`, and run `pg_restore`:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.app.yml stop web worker-ingest worker-ai
@@ -82,3 +82,18 @@ docker cp ./backups/core-postgres-predeploy-YYYYMMDD-HHMMSS.dump core-postgres:/
 docker compose -f docker-compose.yml exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB" && pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" /tmp/restore.dump'
 docker compose -f docker-compose.yml -f docker-compose.app.yml up -d
 ```
+
+## Full machine restore from Docker backup
+
+If you are moving an existing installation to a brand new Linux machine and you
+have a backup folder with Docker volumes (`postgres_data.tgz`, `redis_data.tgz`,
+`opensearch_data.tgz`, `minio_data.tgz` and `SHA256SUMS.txt`), restore it with:
+
+```bash
+bash scripts/restore-docker-backup-linux.sh /path/to/backup --force
+docker compose -f docker-compose.yml -f docker-compose.app.yml up -d
+```
+
+This restores the named Docker volumes used by the Compose project and is the
+fastest path when the goal is to preserve the entire stack state, not just the
+PostgreSQL database.

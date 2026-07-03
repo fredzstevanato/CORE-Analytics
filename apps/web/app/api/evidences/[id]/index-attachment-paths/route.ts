@@ -33,10 +33,11 @@ function pickBestMatch(fileName: string, candidates: string[]) {
   return preferred ?? candidates[0];
 }
 
-type MediaKind = "pdf" | "image" | "video" | "other";
+type MediaKind = "pdf" | "image" | "video" | "audio" | "other";
 
 const IMAGE_EXT_RE = /\.(jpe?g|png|webp|bmp|heic|heif|gif)$/i;
 const VIDEO_EXT_RE = /\.(mp4|mov|m4v|mkv|3gp|webm|avi|wmv|flv)$/i;
+const AUDIO_EXT_RE = /\.(aac|amr|flac|m4a|mp3|ogg|opus|wav|wma)$/i;
 const PDF_EXT_RE = /\.pdf$/i;
 const GIF_EXT_RE = /\.gif$/i;
 const STICKER_NAME_RE = /(^|[\\/])STK-[0-9]{8}-WA\d+\.webp$/i;
@@ -85,8 +86,9 @@ function detectMediaKind(input: { mimeType?: string | null; fileName?: string | 
   const mime = normalize(input.mimeType ?? "");
   const ref = `${input.fileName ?? ""} ${input.archivePath ?? ""}`.trim();
   if (mime === "application/pdf" || PDF_EXT_RE.test(ref)) return "pdf" satisfies MediaKind;
-  if (mime.startsWith("image/") || IMAGE_EXT_RE.test(ref)) return "image" satisfies MediaKind;
-  if (mime.startsWith("video/") || VIDEO_EXT_RE.test(ref)) return "video" satisfies MediaKind;
+  if (mime === "image" || mime.startsWith("image/") || IMAGE_EXT_RE.test(ref)) return "image" satisfies MediaKind;
+  if (mime === "video" || mime.startsWith("video/") || VIDEO_EXT_RE.test(ref)) return "video" satisfies MediaKind;
+  if (mime === "voice message" || mime.startsWith("audio/") || AUDIO_EXT_RE.test(ref)) return "audio" satisfies MediaKind;
   return "other" satisfies MediaKind;
 }
 
@@ -135,7 +137,7 @@ function shouldIndexByPolicy(input: {
   const game = isLikelyGamePath(input.archivePath) || isLikelyGamePath(input.fileName);
   const bankLike = hasBankTransferSignal(joinedSignals);
 
-  if (kind === "pdf") {
+  if (kind === "pdf" || kind === "audio") {
     return { allowed: true as const, kind };
   }
   if (kind === "image") {

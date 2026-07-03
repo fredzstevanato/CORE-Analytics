@@ -1823,9 +1823,12 @@ export async function listAudioTranscriptions(limit = 200) {
   });
 }
 
-export async function listCustodyEvents(caseId?: string, limit = 300) {
+export async function listCustodyEvents(caseId?: string, limit = 300, evidenceId?: string) {
   return prisma.custodyEvent.findMany({
-    where: caseId ? { caseId } : undefined,
+    where: {
+      ...(caseId ? { caseId } : {}),
+      ...(evidenceId ? { evidenceId } : {})
+    },
     take: limit,
     orderBy: { createdAt: "desc" },
     include: { actor: true, evidence: true }

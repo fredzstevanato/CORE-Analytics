@@ -6,54 +6,149 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
 
-export default async function EvidenceDevicesPage() {
-  const devices = await prisma.device.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      matchedSeizedObject: true,
-      deviceMatches: {
-        orderBy: { updatedAt: "desc" },
-        take: 5
+function buildFilterHref(pathname: string, input: { caseId?: string; extractionId?: string }) {
+  const params = new URLSearchParams();
+  if (input.caseId) params.set("caseId", input.caseId);
+  if (input.extractionId) params.set("extractionId", input.extractionId);
+  return `${pathname}?${params.toString()}`;
+}
+
+export default async function EvidenceDevicesPage({
+  searchParams
+}: {
+  searchParams: Promise<{ caseId?: string; extractionId?: string }>;
+}) {
+  const params = await searchParams;
+  const caseId = params.caseId?.trim() || undefined;
+  const extractionId = params.extractionId?.trim() || undefined;
+
+  const [cases, extractions] = await Promise.all([
+    prisma.case.findMany({
+      orderBy: { createdAt: "desc" },
+      select: { id: true, caseNumber: true, title: true }
+    }),
+    prisma.extraction.findMany({
+      where: caseId ? { caseId } : undefined,
+      orderBy: { createdAt: "desc" },
+      take: 500,
+      select: {
+        id: true,
+        caseId: true,
+        evidenceId: true,
+        evidence: { select: { fileName: true } }
+      }
+    })
+  ]);
+
+  const selectedExtraction = extractionId ? extractions.find((row) => row.id === extractionId) : null;
+  const selectedEvidenceId = selectedExtraction?.evidenceId;
+  const selectedCaseId = caseId ?? selectedExtraction?.caseId;
+
+  const [devices, seizedObjects] = await Promise.all([
+    prisma.device.findMany({
+      where: {
+        extraction: {
+          ...(selectedCaseId ? { caseId: selectedCaseId } : {}),
+          ...(extractionId ? { id: extractionId } : {}),
+          ...(selectedEvidenceId ? { evidenceId: selectedEvidenceId } : {})
+        }
       },
-      extraction: {
-        include: {
-          evidence: {
-            include: {
-              case: {
-                include: {
-                  seizedObjects: true,
-                  expertReports: true
+      orderBy: { createdAt: "desc" },
+      include: {
+        matchedSeizedObject: true,
+        deviceMatches: {
+          orderBy: { updatedAt: "desc" },
+          take: 5
+        },
+        extraction: {
+          include: {
+            evidence: {
+              include: {
+                case: {
+                  include: {
+                    seizedObjects: true,
+                    expertReports: true
+                  }
                 }
               }
             }
           }
         }
-      }
-    },
-    take: 200
-  });
-
-  const seizedObjects = await prisma.seizedObject.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      case: true,
-      expertReport: {
-        select: {
-          id: true,
-          title: true
+      },
+      take: 200
+    }),
+    prisma.seizedObject.findMany({
+      where: selectedCaseId ? { caseId: selectedCaseId } : undefined,
+      orderBy: { createdAt: "desc" },
+      include: {
+        case: true,
+        expertReport: {
+          select: {
+            id: true,
+            title: true
+          }
+        },
+        deviceMatches: {
+          orderBy: { updatedAt: "desc" },
+          take: 1
         }
       },
-      deviceMatches: {
-        orderBy: { updatedAt: "desc" },
-        take: 1
-      }
-    },
-    take: 200
-  });
+      take: 200
+    })
+  ]);
 
   return (
     <section className="space-y-4">
       <h2 className="text-2xl font-bold">Evidencias / Aparelhos</h2>
+      <Card>
+        <CardHeader>
+          <CardTitle>Filtros</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_minmax(260px,1.2fr)_auto]" method="GET">
+            <select name="caseId" defaultValue={selectedCaseId ?? ""} className="min-w-0 rounded border border-zinc-300 px-3 py-2 text-sm">
+              <option value="">Todos os casos</option>
+              {cases.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.caseNumber} - {item.title}
+                </option>
+              ))}
+            </select>
+            <select name="extractionId" defaultValue={extractionId ?? ""} className="min-w-0 rounded border border-zinc-300 px-3 py-2 text-sm">
+              <option value="">Todas as extracoes</option>
+              {extractions.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.id} - {row.evidence.fileName}
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-2">
+              <button className="rounded bg-zinc-900 px-4 py-2 text-sm text-white" type="submit">
+                Filtrar
+              </button>
+              <Link className="rounded border border-zinc-300 px-4 py-2 text-sm" href="/evidences/devices">
+                Limpar
+              </Link>
+            </div>
+          </form>
+          {selectedCaseId ? (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              <Link
+                className="text-blue-700 hover:underline"
+                href={buildFilterHref("/evidences/custody", { caseId: selectedCaseId, extractionId })}
+              >
+                Ver custodia filtrada
+              </Link>
+              <Link
+                className="text-blue-700 hover:underline"
+                href={buildFilterHref("/evidences/chain-of-custody", { caseId: selectedCaseId, extractionId })}
+              >
+                Ver cadeia filtrada
+              </Link>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>Dispositivos detectados nas extracoes</CardTitle>

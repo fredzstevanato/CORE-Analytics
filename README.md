@@ -96,12 +96,17 @@ npm run dev:web
 - Casos: `/cases`
 - Evidencias + upload UFDR: `/evidences`
 - Processamento: `/extractions`
-- Busca: `/search`
-- Chats: `/chats`
-- Mensagens: `/messages`
-- Timeline: `/timeline`
+- Busca investigativa: `/analysis/search`
+- Mensagens/chats: `/analysis/messages`
+- Arquivos auditaveis: `/analysis/attachments`
+- Audios/transcricoes: `/analysis/audios`
+- Analise de IA: `/analysis/ai`
+- Timeline: `/analysis/timeline`
+- Localizacoes: `/analysis/locations`
+- Grafo de telefones: `/graph`
+- Operacoes e filas: `/settings/operations`
 
-## Fluxo implementado (MVP inicial)
+## Fluxo implementado
 
 1. Upload de `.ufdr` em `apps/web` (`/api/upload-ufdr`)
 2. Hash SHA-256 calculado
@@ -116,9 +121,13 @@ npm run dev:web
 11. Indexa resumo em OpenSearch (`messages` index inicial)
 12. Atualiza extraction para `COMPLETED`
 13. Extrai arquivos de audio do UFDR e cria `AudioTranscription` pendente
-14. Enfileira jobs para `worker-ai` com Whisper local
-15. `worker-ai` transcreve e salva texto/segmentos vinculados a attachment/evidencia/extracao
-16. `worker-ai` tambem processa OCR local (Tesseract) e classificacao inicial de texto para insights
+14. Enfileira jobs para `worker-ai` com engine local, OpenAI ou AssemblyAI
+15. `worker-ai` transcreve `.opus` e salva texto/segmentos vinculados a attachment/evidencia/extracao
+16. Audios nao `.opus` sao marcados como falha por politica e nao ficam presos na fila
+17. `worker-ai` processa OCR local (Tesseract) para anexos auditaveis e classifica textos para insights
+18. Arquivos, imagens, PDFs e videos recebem triagem de qualidade (`AUDITABLE`, `REVIEWABLE`, `DISCARDED`)
+19. Localizacoes podem ser abertas no Google Maps e exportadas em KML por evidencia
+20. Triagem investigativa e relatorio consolidado usam chats, transcricoes, OCR, arquivos auditaveis e audios sem chat selecionados
 
 ## Observacoes
 
@@ -127,6 +136,20 @@ npm run dev:web
 - O projeto ja nasce preparado para escalar com OCR/transcricao/IA via `worker-ai`.
 - Para transcricao local, instale Whisper CLI no host e configure `WHISPER_BIN`/`WHISPER_MODEL`.
 - Para OCR local, instale Tesseract e configure `TESSERACT_BIN`.
+- Se o Tesseract nao tiver o idioma solicitado, o OCR tenta fallback para `eng`/padrao.
+- Exportacao CORE Hub e acao manual/discricionaria, nao automatica.
+- Jobs de transcricao com erro permanente sao removidos da fila apos gravar o erro no banco; erros de credito/quota permanecem para retry.
+
+## Funcionalidades de analise
+
+- Busca full-text em mensagens, chats, contatos, anexos, chamadas e arquivos.
+- Resultados de busca exibem botoes para abrir caso, evidencia, extracao e contexto de analise em nova aba.
+- Contatos e participantes de WhatsApp mostram telefone derivado de `phone`, `handle` ou `@s.whatsapp.net`.
+- Mensagens mostram participantes, telefones/WhatsApp, anexos e transcricoes vinculadas.
+- Audios `.opus` sem chat tambem sao transcritos e podem ser selecionados para entrar no relatorio final.
+- Arquivos auditaveis podem ser filtrados por qualidade e usados no relatorio consolidado.
+- Localizacoes mostram coordenadas, botao para Google Maps e download KML.
+- Triagem de IA permite recuperar job em andamento e sincronizar barra com estado real da fila.
 
 ## Troubleshooting rapido
 

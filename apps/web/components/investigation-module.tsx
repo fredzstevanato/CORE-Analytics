@@ -74,6 +74,13 @@ type JobStatusResponse = {
   failedReason?: string | null;
 };
 
+type CurrentJobResponse = {
+  id: string;
+  state: string;
+  progress: number;
+  evidenceId?: string | null;
+};
+
 type InvestigationEstimate = {
   mode: "triage" | "report";
   aiEngine: "local" | "openai";
@@ -370,12 +377,10 @@ export function InvestigationModule({
   }
 
   async function pollJob(type: "triage" | "report", jobId: string) {
-    let visualProgress = Math.max(0, Math.min(95, progress || 0));
-    let staleTicks = 0;
-    let lastBackendProgress = -1;
-
     for (;;) {
-      const response = await fetch(`/api/investigation/jobs/${jobId}?type=${type}`);
+      const response = await fetch(`/api/investigation/jobs/${jobId}?type=${type}&t=${Date.now()}`, {
+        cache: "no-store"
+      });
       const payload = (await response.json()) as JobStatusResponse & { error?: string };
       if (!response.ok) {
         throw new Error(payload.error ?? "Falha ao consultar status do job.");
@@ -383,25 +388,12 @@ export function InvestigationModule({
 
       const backendProgress = clampProgress(payload.progress);
       const state = String(payload.state || "").toLowerCase();
-
-      if (backendProgress !== lastBackendProgress) {
-        staleTicks = 0;
-        lastBackendProgress = backendProgress;
-      } else {
-        staleTicks += 1;
-      }
-
-      if (state === "waiting" || state === "delayed") {
-        visualProgress = Math.max(visualProgress, Math.max(6, backendProgress));
-      } else if (state === "active") {
-        visualProgress = Math.max(visualProgress, Math.max(12, backendProgress));
-
-        if (backendProgress <= visualProgress && visualProgress < 95 && staleTicks >= 2) {
-          visualProgress = Math.min(95, visualProgress + 1);
-        }
-      } else {
-        visualProgress = Math.max(visualProgress, backendProgress);
-      }
+      const visualProgress =
+        state === "waiting" || state === "delayed"
+          ? Math.max(6, backendProgress)
+          : state === "active"
+            ? Math.max(12, backendProgress)
+            : backendProgress;
 
       setProgress(visualProgress);
 
@@ -429,10 +421,34 @@ export function InvestigationModule({
     setProgress(20);
     try {
       const response = await fetch(
-        `/api/investigation/triage?caseId=${caseId}${extractionId ? `&extractionId=${encodeURIComponent(extractionId)}` : ""}`
+        `/api/investigation/triage?caseId=${caseId}${extractionId ? `&extractionId=${encodeURIComponent(extractionId)}` : ""}&t=${Date.now()}`,
+        { cache: "no-store" }
       );
-      const payload = (await response.json()) as { latest?: TriageEnvelope; error?: string };
+      const payload = (await response.json()) as {
+        latest?: TriageEnvelope;
+        currentJob?: CurrentJobResponse | null;
+        error?: string;
+      };
       if (!response.ok) throw new Error(payload.error ?? "Falha ao carregar triagem.");
+
+      if (payload.currentJob?.id && !["completed", "failed"].includes(payload.currentJob.state.toLowerCase())) {
+        setProgress(clampProgress(payload.currentJob.progress));
+        setStatus(`Triagem em andamento (job ${payload.currentJob.id})... ${Math.round(clampProgress(payload.currentJob.progress))}%`);
+        const done = await pollJob("triage", payload.currentJob.id);
+        const result = done.returnvalue as TriageEnvelope | undefined;
+        if (!result?.payload) {
+          throw new Error("Triagem concluida sem payload.");
+        }
+
+        setTriage(result);
+        const preselected = getDefaultSelectedChatIds(result.payload);
+        setSelectedChats(new Set(preselected));
+        setSelectionDirty(false);
+        setStatus(result.summary ?? "Triagem concluida.");
+        setProgress(100);
+        return;
+      }
+
       setTriage(payload.latest ?? null);
       const preselected = payload.latest?.payload ? getDefaultSelectedChatIds(payload.latest.payload) : [];
       setSelectedChats(new Set(preselected));

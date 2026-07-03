@@ -1,33 +1,34 @@
-﻿CORE-Analytics - Guia rapido de setup (maquina destino)
+﻿CORE-Analytics - Guia rapido de transferencia para Linux
 
-1) Requisitos
-- Node.js 22.x (ou >=20.11.0 <25)
-- npm 10.x
-- Docker Desktop ativo
+1) Cenario A: maquina nova, instalacao limpa com Docker
+- Requisitos: Docker Engine + Docker Compose plugin
+- Copie/clonar o repositorio na maquina destino
+- Crie o arquivo .env a partir de .env.example
+- Ajuste pelo menos: CORE_IMAGE, SESSION_SECRET, SETTINGS_ENCRYPTION_KEY, STORAGE_ROOT e UFDR_SOURCE_ROOT
+- Suba a stack:
+  cp .env.example .env
+  docker compose -f docker-compose.yml -f docker-compose.app.yml up -d
+- Para atualizacoes futuras, use:
+  sh scripts/deploy-core-analytics-image.sh
 
-2) Preparar variaveis
-- Copie .env.example para .env
-  PowerShell:
-  Copy-Item .env.example .env
+2) Cenario B: restaurar uma instalacao completa existente
+- Leve para a maquina destino a pasta de backup Docker com:
+  SHA256SUMS.txt
+  postgres_data.tgz
+  redis_data.tgz
+  opensearch_data.tgz
+  minio_data.tgz
+- Restaure os volumes Docker:
+  bash scripts/restore-docker-backup-linux.sh /caminho/para/backup --force
+- Depois suba a stack:
+  docker compose -f docker-compose.yml -f docker-compose.app.yml up -d
 
-3) Subir infraestrutura
-- docker compose up -d
-
-4) Instalar dependencias
-- npm install
-
-5) Banco (Prisma)
-- npm run db:generate
-- npm run db:migrate
-- npm run db:seed
-
-6) Rodar aplicacao
-- npm run dev
-
-7) Acesso
-- http://localhost:3001
-- Login: usar MOCK_USER_EMAIL e MOCK_USER_PASSWORD do .env
+3) Acesso
+- Web: http://localhost:3001
+- Login: usar MOCK_USER_EMAIL e MOCK_USER_PASSWORD definidos no .env
 
 Observacoes
-- Este pacote nao inclui node_modules, storage, caches/builds e runtime OCR local.
-- Se for usar OCR/transcricao local, instalar/configurar binarios na maquina destino.
+- Nao commitar .env reais nem arquivos .env.* locais.
+- O storage da aplicacao fica em STORAGE_ROOT e a origem UFDR fica em UFDR_SOURCE_ROOT.
+- Para OCR/transcricao local no host, instale/configure os binarios necessarios ou use a imagem Docker ja preparada.
+- Guia detalhado Linux: deploy/linux/README.md

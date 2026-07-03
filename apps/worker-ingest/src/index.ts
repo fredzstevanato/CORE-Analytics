@@ -1,7 +1,8 @@
 import "./load-env.js";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { cp, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { Queue, Worker } from "bullmq";
 import {
   addCustodyEvent,
@@ -29,6 +30,7 @@ import {
   enqueueAudioRecoveryBatch,
   enqueueAudioRecoveryFinalize,
   enqueueAudioTranscription,
+  enqueueOcrDocument,
   enqueueUfdrIngestion,
   redisConnection,
   QUEUE_NAMES
@@ -125,10 +127,791 @@ type AudioExtractionHintRow = {
 };
 
 const OPUS_EXT_RE = /\.opus$/i;
+type AttachmentMediaKind = "pdf" | "image" | "video" | "audio" | "other";
+
+const ATTACHMENT_IMAGE_EXT_RE = /\.(jpe?g|png|webp|bmp|heic|heif|gif)$/i;
+const ATTACHMENT_VIDEO_EXT_RE = /\.(mp4|mov|m4v|mkv|3gp|webm|avi|wmv|flv)$/i;
+const ATTACHMENT_AUDIO_EXT_RE = /\.(aac|amr|flac|m4a|mp3|ogg|opus|wav|wma)$/i;
+const ATTACHMENT_PDF_EXT_RE = /\.pdf$/i;
+const ATTACHMENT_GIF_EXT_RE = /\.gif$/i;
+const ATTACHMENT_STICKER_NAME_RE = /(^|[\\/])STK-[0-9]{8}-WA\d+\.webp$/i;
+const ATTACHMENT_MIN_IMAGE_BYTES_DEFAULT = 12 * 1024;
+const ATTACHMENT_MIN_STICKER_BYTES_DEFAULT = 24 * 1024;
+const ATTACHMENT_MIN_PDF_BYTES_DEFAULT = 5 * 1024;
+const ATTACHMENT_MIN_IMAGE_WIDTH_DEFAULT = 300;
+const ATTACHMENT_MIN_IMAGE_HEIGHT_DEFAULT = 300;
+const ATTACHMENT_MIN_VIDEO_SECONDS_DEFAULT = 2;
+
+type AttachmentQualityStatus = "AUDITABLE" | "REVIEWABLE" | "DISCARDED";
+type AttachmentQualityDecision = {
+  status: AttachmentQualityStatus;
+  score: number;
+  reason: string;
+  kind: AttachmentMediaKind;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+  pages?: number;
+  textLength?: number;
+  bytes?: number;
+  auditCachePath?: string;
+  ocrCandidate?: boolean;
+};
 
 function hasOpusExtension(value?: string | null) {
   if (!value) return false;
   return OPUS_EXT_RE.test(value.trim());
+}
+
+function normalizeAttachmentIndexValue(value?: string | null) {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function attachmentBasenameLower(filePath: string) {
+  return path.basename(filePath).trim().toLowerCase();
+}
+
+function pickBestAttachmentArchiveMatch(fileName: string, candidates: string[]) {
+  if (candidates.length === 0) return undefined;
+  if (candidates.length === 1) return candidates[0];
+  const lower = fileName.trim().toLowerCase();
+  return (
+    candidates.find((entry) => /(^|[\\/])files[\\/]/i.test(entry)) ??
+    candidates.find((entry) => entry.toLowerCase().includes("/files/")) ??
+    candidates.find((entry) => entry.toLowerCase().includes("\\files\\")) ??
+    candidates.find((entry) => entry.toLowerCase().endsWith(lower)) ??
+    candidates[0]
+  );
+}
+
+function detectAttachmentMediaKind(input: { mimeType?: string | null; fileName?: string | null; archivePath?: string | null }) {
+  const mime = normalizeAttachmentIndexValue(input.mimeType);
+  const ref = `${input.fileName ?? ""} ${input.archivePath ?? ""}`.trim();
+  if (mime === "application/pdf" || ATTACHMENT_PDF_EXT_RE.test(ref)) return "pdf" satisfies AttachmentMediaKind;
+  if (mime === "image" || mime.startsWith("image/") || ATTACHMENT_IMAGE_EXT_RE.test(ref)) {
+    return "image" satisfies AttachmentMediaKind;
+  }
+  if (mime === "video" || mime.startsWith("video/") || ATTACHMENT_VIDEO_EXT_RE.test(ref)) {
+    return "video" satisfies AttachmentMediaKind;
+  }
+  if (mime === "voice message" || mime.startsWith("audio/") || ATTACHMENT_AUDIO_EXT_RE.test(ref)) {
+    return "audio" satisfies AttachmentMediaKind;
+  }
+  return "other" satisfies AttachmentMediaKind;
+}
+
+function isAttachmentGifMedia(input: { mimeType?: string | null; fileName?: string | null; archivePath?: string | null }) {
+  const mime = normalizeAttachmentIndexValue(input.mimeType);
+  const ref = `${input.fileName ?? ""} ${input.archivePath ?? ""}`.trim();
+  return mime === "image/gif" || ATTACHMENT_GIF_EXT_RE.test(ref);
+}
+
+function parsePositiveAttachmentIntEnv(name: string, fallback: number) {
+  const n = Number(process.env[name]);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.floor(n);
+}
+
+function shouldDiscardTinyAttachmentImage(input: {
+  fileName?: string | null;
+  archivePath?: string | null;
+  sizeBytes?: bigint | null;
+}) {
+  const rawSize = Number(input.sizeBytes ?? 0n);
+  if (!Number.isFinite(rawSize) || rawSize <= 0) return false;
+
+  const minImageBytes = parsePositiveAttachmentIntEnv("ATTACHMENT_IMAGE_MIN_BYTES", ATTACHMENT_MIN_IMAGE_BYTES_DEFAULT);
+  const minStickerBytes = parsePositiveAttachmentIntEnv(
+    "ATTACHMENT_STICKER_MIN_BYTES",
+    ATTACHMENT_MIN_STICKER_BYTES_DEFAULT
+  );
+  const ref = `${input.fileName ?? ""} ${input.archivePath ?? ""}`.trim();
+  const isStickerLike = ATTACHMENT_STICKER_NAME_RE.test(ref) || /(^|[\\/])stickers?([\\/]|$)/i.test(ref);
+  return rawSize < (isStickerLike ? minStickerBytes : minImageBytes);
+}
+
+function isMessagingAttachmentSourceApp(value?: string | null) {
+  const source = normalizeAttachmentIndexValue(value);
+  return Boolean(source && /(whatsapp|telegram|signal|messenger|facebook|instagram|imessage|sms|mms|wechat|viber)/i.test(source));
+}
+
+function isMessagingAttachmentPath(value?: string | null) {
+  const row = normalizeAttachmentIndexValue(value);
+  return Boolean(row && /(whatsapp|telegram|messenger|instagram|facebook|messages?|chats?|conversation|inbox|media)/i.test(row));
+}
+
+function isLikelyAttachmentCameraPath(value?: string | null) {
+  const row = normalizeAttachmentIndexValue(value);
+  return Boolean(row && /(dcim|camera|cameraroll|camera roll|100andro|\bimg[_-]?\d+|\bdsc[_-]?\d+)/i.test(row));
+}
+
+function isLikelyAttachmentGamePath(value?: string | null) {
+  const row = normalizeAttachmentIndexValue(value);
+  return Boolean(row && /(games?|jogos?|unity|unreal|minecraft|roblox|free ?fire|pubg|fortnite|callofduty|codm)/i.test(row));
+}
+
+function isLikelyAttachmentScreenshotPath(value?: string | null) {
+  const row = normalizeAttachmentIndexValue(value);
+  return Boolean(row && /(screenshot|screen[_ -]?shot|screenrecord|screen[_ -]?record|captura de tela|print[_ -]?screen)/i.test(row));
+}
+
+function hasAttachmentBankTransferSignal(value?: string | null) {
+  const row = normalizeAttachmentIndexValue(value);
+  return Boolean(
+    row &&
+      /(pix|ted|doc|transfer|transferencia|comprovante|pagamento|deposito|bank|banco|nubank|itau|bradesco|santander|caixa|bb\b)/i.test(
+        row
+      )
+  );
+}
+
+function shouldIndexAttachmentByPolicy(input: {
+  mimeType?: string | null;
+  fileName?: string | null;
+  archivePath?: string | null;
+  sizeBytes?: bigint | null;
+  sourceApp?: string | null;
+  messageBody?: string | null;
+}) {
+  const kind = detectAttachmentMediaKind(input);
+  const joinedSignals = `${input.fileName ?? ""} ${input.archivePath ?? ""} ${input.messageBody ?? ""}`;
+  const messaging = isMessagingAttachmentSourceApp(input.sourceApp) || isMessagingAttachmentPath(input.archivePath);
+  const camera = isLikelyAttachmentCameraPath(input.archivePath) || isLikelyAttachmentCameraPath(input.fileName);
+  const screenshot = isLikelyAttachmentScreenshotPath(input.archivePath) || isLikelyAttachmentScreenshotPath(input.fileName);
+  const game = isLikelyAttachmentGamePath(input.archivePath) || isLikelyAttachmentGamePath(input.fileName);
+  const bankLike = hasAttachmentBankTransferSignal(joinedSignals);
+
+  if (kind === "pdf" || kind === "audio" || kind === "other") return { allowed: true as const, kind };
+  if (kind === "image") {
+    if (isAttachmentGifMedia(input)) return { allowed: false as const, kind, reason: "IMAGE_GIF_DISCARDED" };
+    if (shouldDiscardTinyAttachmentImage(input)) {
+      return { allowed: false as const, kind, reason: "IMAGE_TOO_SMALL_DISCARDED" };
+    }
+    if (camera || screenshot || bankLike) return { allowed: true as const, kind };
+    return { allowed: false as const, kind, reason: "IMAGE_NOT_RELEVANT_POLICY" };
+  }
+  if (kind === "video") {
+    if (game) return { allowed: false as const, kind, reason: "VIDEO_GAME_PATH_DISCARDED" };
+    if (camera || screenshot || messaging) return { allowed: true as const, kind };
+    return { allowed: false as const, kind, reason: "VIDEO_NON_RELEVANT_PATH_DISCARDED" };
+  }
+  return { allowed: true as const, kind };
+}
+
+function safeAttachmentCacheName(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function readUInt24LE(buffer: Buffer, offset: number) {
+  return (buffer[offset] ?? 0) + ((buffer[offset + 1] ?? 0) << 8) + ((buffer[offset + 2] ?? 0) << 16);
+}
+
+function readJpegDimensions(buffer: Buffer) {
+  if (buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return {};
+  let offset = 2;
+  while (offset + 9 < buffer.length) {
+    if (buffer[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = buffer[offset + 1];
+    const length = buffer.readUInt16BE(offset + 2);
+    if (length < 2) break;
+    if (
+      marker === 0xc0 ||
+      marker === 0xc1 ||
+      marker === 0xc2 ||
+      marker === 0xc3 ||
+      marker === 0xc5 ||
+      marker === 0xc6 ||
+      marker === 0xc7 ||
+      marker === 0xc9 ||
+      marker === 0xca ||
+      marker === 0xcb ||
+      marker === 0xcd ||
+      marker === 0xce ||
+      marker === 0xcf
+    ) {
+      return {
+        height: buffer.readUInt16BE(offset + 5),
+        width: buffer.readUInt16BE(offset + 7)
+      };
+    }
+    offset += 2 + length;
+  }
+  return {};
+}
+
+function readPngDimensions(buffer: Buffer) {
+  if (buffer.length < 24) return {};
+  if (buffer.toString("hex", 0, 8) !== "89504e470d0a1a0a") return {};
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20)
+  };
+}
+
+function readWebpDimensions(buffer: Buffer) {
+  if (buffer.length < 30 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WEBP") {
+    return {};
+  }
+  const chunk = buffer.toString("ascii", 12, 16);
+  if (chunk === "VP8X" && buffer.length >= 30) {
+    return {
+      width: 1 + readUInt24LE(buffer, 24),
+      height: 1 + readUInt24LE(buffer, 27)
+    };
+  }
+  if (chunk === "VP8 " && buffer.length >= 30) {
+    return {
+      width: buffer.readUInt16LE(26) & 0x3fff,
+      height: buffer.readUInt16LE(28) & 0x3fff
+    };
+  }
+  if (chunk === "VP8L" && buffer.length >= 25) {
+    const b0 = buffer[21] ?? 0;
+    const b1 = buffer[22] ?? 0;
+    const b2 = buffer[23] ?? 0;
+    const b3 = buffer[24] ?? 0;
+    return {
+      width: 1 + (((b1 & 0x3f) << 8) | b0),
+      height: 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6))
+    };
+  }
+  return {};
+}
+
+function readImageDimensions(buffer: Buffer, fileName?: string | null) {
+  const ext = path.extname(fileName ?? "").toLowerCase();
+  if (ext === ".png") return readPngDimensions(buffer);
+  if (ext === ".jpg" || ext === ".jpeg") return readJpegDimensions(buffer);
+  if (ext === ".webp") return readWebpDimensions(buffer);
+  return readPngDimensions(buffer).width ? readPngDimensions(buffer) : readJpegDimensions(buffer);
+}
+
+function stripPdfTextNoise(value: string) {
+  return value
+    .replace(/\\[()\\]/g, "")
+    .replace(/\\[nrtbf]/g, " ")
+    .replace(/[^\p{L}\p{N}@._:/ -]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function inspectPdfBytes(buffer: Buffer) {
+  const ascii = buffer.toString("latin1");
+  const pages = Math.max(0, (ascii.match(/\/Type\s*\/Page\b/g) ?? []).length);
+  const snippets: string[] = [];
+  const literalRe = /\(([^()]{3,500})\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = literalRe.exec(ascii)) && snippets.join(" ").length < 8000) {
+    snippets.push(match[1] ?? "");
+  }
+  const text = stripPdfTextNoise(snippets.join(" "));
+  return {
+    pages,
+    textLength: text.length
+  };
+}
+
+function resolveFfprobeBin() {
+  const ffmpeg = process.env.FFMPEG_BIN;
+  if (!ffmpeg) return "ffprobe";
+  const dir = path.dirname(ffmpeg);
+  const ext = process.platform === "win32" ? ".exe" : "";
+  return path.resolve(dir, `ffprobe${ext}`);
+}
+
+async function runFfprobeMetadata(filePath: string): Promise<{ width?: number; height?: number; durationSeconds?: number; codecName?: string }> {
+  const ffprobeBin = resolveFfprobeBin();
+  return new Promise((resolve) => {
+    const child = spawn(ffprobeBin, [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=codec_name,width,height:format=duration",
+      "-of",
+      "json",
+      filePath
+    ]);
+    let stdout = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk.toString()));
+    child.on("error", () => resolve({}));
+    child.on("close", () => {
+      try {
+        const parsed = JSON.parse(stdout) as {
+          streams?: Array<{ codec_name?: string; width?: number; height?: number }>;
+          format?: { duration?: string };
+        };
+        const stream = parsed.streams?.[0];
+        const duration = Number(parsed.format?.duration);
+        resolve({
+          width: typeof stream?.width === "number" ? stream.width : undefined,
+          height: typeof stream?.height === "number" ? stream.height : undefined,
+          durationSeconds: Number.isFinite(duration) ? duration : undefined,
+          codecName: typeof stream?.codec_name === "string" ? stream.codec_name : undefined
+        });
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+
+async function ensureAttachmentAuditCache(input: {
+  ufdrAbsolutePath: string;
+  caseId: string;
+  evidenceId: string;
+  attachmentId: string;
+  archivePath: string;
+  fileName: string;
+}) {
+  const storageRoot = resolveStorageRoot();
+  const cacheDir = path.resolve(storageRoot, "derived", input.caseId, input.evidenceId, "attachment-audit-cache");
+  await mkdir(cacheDir, { recursive: true });
+  const extension = path.extname(input.fileName) || path.extname(input.archivePath);
+  const cacheName = `${input.attachmentId}-${safeAttachmentCacheName(path.basename(input.fileName, path.extname(input.fileName)))}${extension}`;
+  const outputPath = path.resolve(cacheDir, cacheName);
+  const existing = await stat(outputPath).catch(() => null);
+  if (existing?.isFile() && existing.size > 0) return outputPath;
+  await extractArchiveEntryToFile({
+    ufdrAbsolutePath: input.ufdrAbsolutePath,
+    entryPath: input.archivePath,
+    outputPath
+  });
+  return outputPath;
+}
+
+function buildQualityMetadata(current: unknown, decision: AttachmentQualityDecision, source: string) {
+  const base = current && typeof current === "object" && !Array.isArray(current) ? (current as Record<string, unknown>) : {};
+  return {
+    ...base,
+    quality: {
+      status: decision.status,
+      score: decision.score,
+      reason: decision.reason,
+      kind: decision.kind,
+      width: decision.width ?? null,
+      height: decision.height ?? null,
+      durationSeconds: decision.durationSeconds ?? null,
+      pages: decision.pages ?? null,
+      textLength: decision.textLength ?? null,
+      bytes: decision.bytes ?? null,
+      auditCachePath: decision.auditCachePath ?? null,
+      ocrCandidate: decision.ocrCandidate ?? false,
+      checkedAt: new Date().toISOString(),
+      checkedBy: source
+    }
+  };
+}
+
+async function analyzeAttachmentQuality(input: {
+  ufdrAbsolutePath: string;
+  caseId: string;
+  evidenceId: string;
+  attachmentId: string;
+  mimeType?: string | null;
+  fileName?: string | null;
+  archivePath: string;
+  sizeBytes?: bigint | null;
+  sourceApp?: string | null;
+  messageBody?: string | null;
+}) {
+  const kind = detectAttachmentMediaKind(input);
+  const joinedSignals = `${input.fileName ?? ""} ${input.archivePath} ${input.messageBody ?? ""}`;
+  const messaging = isMessagingAttachmentSourceApp(input.sourceApp) || isMessagingAttachmentPath(input.archivePath);
+  const camera = isLikelyAttachmentCameraPath(input.archivePath) || isLikelyAttachmentCameraPath(input.fileName);
+  const screenshot = isLikelyAttachmentScreenshotPath(input.archivePath) || isLikelyAttachmentScreenshotPath(input.fileName);
+  const bankLike = hasAttachmentBankTransferSignal(joinedSignals);
+  const bytesFromDb = Number(input.sizeBytes ?? 0n);
+  const baseDecision = (decision: Omit<AttachmentQualityDecision, "kind" | "bytes">): AttachmentQualityDecision => ({
+    ...decision,
+    kind,
+    bytes: Number.isFinite(bytesFromDb) && bytesFromDb > 0 ? bytesFromDb : undefined
+  });
+
+  if (kind === "audio") return baseDecision({ status: "AUDITABLE", score: 0.9, reason: "AUDIO_INDEXED" });
+  if (kind === "other") return baseDecision({ status: "REVIEWABLE", score: 0.45, reason: "UNKNOWN_FILE_TYPE_REVIEW" });
+
+  if (kind === "image") {
+    if (isAttachmentGifMedia(input)) return baseDecision({ status: "DISCARDED", score: 0.02, reason: "IMAGE_GIF_DISCARDED" });
+    if (ATTACHMENT_STICKER_NAME_RE.test(joinedSignals) || /(^|[\\/])stickers?([\\/]|$)|\bsticker\b|emoji/i.test(joinedSignals)) {
+      return baseDecision({ status: "DISCARDED", score: 0.01, reason: "WHATSAPP_STICKER_OR_EMOJI" });
+    }
+    if (/(^|[\\/])(thumbs?|thumbnails?|cache|icons?|avatars?|profile)([\\/]|$)|\b(icon|thumbnail|avatar|profile|cache)\b/i.test(joinedSignals)) {
+      return baseDecision({ status: "DISCARDED", score: 0.03, reason: "IMAGE_ICON_THUMBNAIL_CACHE" });
+    }
+
+    const auditCachePath = await ensureAttachmentAuditCache({
+      ufdrAbsolutePath: input.ufdrAbsolutePath,
+      caseId: input.caseId,
+      evidenceId: input.evidenceId,
+      attachmentId: input.attachmentId,
+      archivePath: input.archivePath,
+      fileName: input.fileName ?? path.basename(input.archivePath)
+    }).catch(() => undefined);
+    const info = auditCachePath ? await stat(auditCachePath).catch(() => null) : null;
+    const bytes = info?.size ?? (Number.isFinite(bytesFromDb) ? bytesFromDb : undefined);
+    const buffer = auditCachePath ? await readFile(auditCachePath).catch(() => null) : null;
+    const dimensions = buffer ? readImageDimensions(buffer, input.fileName ?? input.archivePath) : {};
+    const minWidth = parsePositiveAttachmentIntEnv("ATTACHMENT_IMAGE_MIN_WIDTH", ATTACHMENT_MIN_IMAGE_WIDTH_DEFAULT);
+    const minHeight = parsePositiveAttachmentIntEnv("ATTACHMENT_IMAGE_MIN_HEIGHT", ATTACHMENT_MIN_IMAGE_HEIGHT_DEFAULT);
+    const minBytes = parsePositiveAttachmentIntEnv("ATTACHMENT_IMAGE_MIN_BYTES", ATTACHMENT_MIN_IMAGE_BYTES_DEFAULT);
+    if (bytes && bytes < minBytes) {
+      return { ...baseDecision({ status: "DISCARDED", score: 0.05, reason: "IMAGE_TOO_SMALL_DISCARDED" }), ...dimensions, bytes, auditCachePath };
+    }
+    if (dimensions.width && dimensions.height && (dimensions.width < minWidth || dimensions.height < minHeight)) {
+      return {
+        ...baseDecision({ status: "DISCARDED", score: 0.06, reason: "IMAGE_LOW_RESOLUTION_DISCARDED" }),
+        ...dimensions,
+        bytes,
+        auditCachePath
+      };
+    }
+    if (camera || screenshot || bankLike) {
+      return {
+        ...baseDecision({ status: "AUDITABLE", score: bankLike ? 0.95 : 0.86, reason: bankLike ? "IMAGE_BANK_OR_PAYMENT_SIGNAL" : "IMAGE_VISUAL_EVIDENCE_SIGNAL" }),
+        ...dimensions,
+        bytes,
+        auditCachePath,
+        ocrCandidate: true
+      };
+    }
+    return {
+      ...baseDecision({ status: "REVIEWABLE", score: 0.52, reason: "IMAGE_VISIBLE_REVIEW_REQUIRED" }),
+      ...dimensions,
+      bytes,
+      auditCachePath,
+      ocrCandidate: true
+    };
+  }
+
+  if (kind === "pdf") {
+    const auditCachePath = await ensureAttachmentAuditCache({
+      ufdrAbsolutePath: input.ufdrAbsolutePath,
+      caseId: input.caseId,
+      evidenceId: input.evidenceId,
+      attachmentId: input.attachmentId,
+      archivePath: input.archivePath,
+      fileName: input.fileName ?? path.basename(input.archivePath)
+    }).catch(() => undefined);
+    const info = auditCachePath ? await stat(auditCachePath).catch(() => null) : null;
+    const bytes = info?.size ?? (Number.isFinite(bytesFromDb) ? bytesFromDb : undefined);
+    const minBytes = parsePositiveAttachmentIntEnv("ATTACHMENT_PDF_MIN_BYTES", ATTACHMENT_MIN_PDF_BYTES_DEFAULT);
+    if (bytes && bytes < minBytes) {
+      return { ...baseDecision({ status: "DISCARDED", score: 0.04, reason: "PDF_TOO_SMALL_DISCARDED" }), bytes, auditCachePath };
+    }
+    const buffer = auditCachePath ? await readFile(auditCachePath).catch(() => null) : null;
+    const pdf = buffer ? inspectPdfBytes(buffer) : { pages: 0, textLength: 0 };
+    if (pdf.pages === 0 && pdf.textLength === 0) {
+      return { ...baseDecision({ status: "DISCARDED", score: 0.03, reason: "PDF_EMPTY_OR_UNREADABLE" }), ...pdf, bytes, auditCachePath };
+    }
+    if (pdf.textLength >= 80 || bankLike) {
+      return {
+        ...baseDecision({ status: "AUDITABLE", score: bankLike ? 0.96 : 0.82, reason: bankLike ? "PDF_BANK_OR_PAYMENT_SIGNAL" : "PDF_TEXT_EXTRACTABLE" }),
+        ...pdf,
+        bytes,
+        auditCachePath,
+        ocrCandidate: pdf.textLength < 300
+      };
+    }
+    return {
+      ...baseDecision({ status: "REVIEWABLE", score: 0.55, reason: "PDF_NEEDS_OCR_OR_MANUAL_REVIEW" }),
+      ...pdf,
+      bytes,
+      auditCachePath,
+      ocrCandidate: true
+    };
+  }
+
+  if (kind === "video") {
+    if (isLikelyAttachmentGamePath(input.archivePath) || isLikelyAttachmentGamePath(input.fileName)) {
+      return baseDecision({ status: "DISCARDED", score: 0.04, reason: "VIDEO_GAME_PATH_DISCARDED" });
+    }
+    const auditCachePath = await ensureAttachmentAuditCache({
+      ufdrAbsolutePath: input.ufdrAbsolutePath,
+      caseId: input.caseId,
+      evidenceId: input.evidenceId,
+      attachmentId: input.attachmentId,
+      archivePath: input.archivePath,
+      fileName: input.fileName ?? path.basename(input.archivePath)
+    }).catch(() => undefined);
+    const info = auditCachePath ? await stat(auditCachePath).catch(() => null) : null;
+    const video = auditCachePath ? await runFfprobeMetadata(auditCachePath) : {};
+    const minSeconds = parsePositiveAttachmentIntEnv("ATTACHMENT_VIDEO_MIN_SECONDS", ATTACHMENT_MIN_VIDEO_SECONDS_DEFAULT);
+    const videoBytes = info?.size ?? (Number.isFinite(bytesFromDb) ? bytesFromDb : undefined);
+    if (videoBytes && videoBytes < 16 * 1024) {
+      return {
+        ...baseDecision({ status: "DISCARDED", score: 0.04, reason: "VIDEO_TOO_SMALL_OR_THUMBNAIL_DISCARDED" }),
+        ...video,
+        bytes: videoBytes,
+        auditCachePath
+      };
+    }
+    if (!video.durationSeconds && video.codecName === "mjpeg") {
+      return {
+        ...baseDecision({ status: "DISCARDED", score: 0.04, reason: "VIDEO_MJPEG_THUMBNAIL_DISCARDED" }),
+        ...video,
+        bytes: videoBytes,
+        auditCachePath
+      };
+    }
+    if (video.durationSeconds !== undefined && video.durationSeconds < minSeconds) {
+      return {
+        ...baseDecision({ status: "DISCARDED", score: 0.08, reason: "VIDEO_TOO_SHORT_DISCARDED" }),
+        ...video,
+        bytes: videoBytes,
+        auditCachePath
+      };
+    }
+    if (video.width && video.height && (video.width < 240 || video.height < 240)) {
+      return {
+        ...baseDecision({ status: "DISCARDED", score: 0.08, reason: "VIDEO_LOW_RESOLUTION_DISCARDED" }),
+        ...video,
+        bytes: videoBytes,
+        auditCachePath
+      };
+    }
+    if (messaging || camera || screenshot) {
+      return {
+        ...baseDecision({ status: "AUDITABLE", score: 0.82, reason: "VIDEO_VISUAL_EVIDENCE_SIGNAL" }),
+        ...video,
+        bytes: videoBytes,
+        auditCachePath
+      };
+    }
+    return {
+      ...baseDecision({ status: "REVIEWABLE", score: 0.5, reason: "VIDEO_REVIEW_REQUIRED" }),
+      ...video,
+      bytes: videoBytes,
+      auditCachePath
+    };
+  }
+
+  return baseDecision({ status: "REVIEWABLE", score: 0.45, reason: "REVIEW_REQUIRED" });
+}
+
+function markAttachmentMissingInExtraction(current: unknown, source: string) {
+  const base = current && typeof current === "object" && !Array.isArray(current) ? (current as Record<string, unknown>) : {};
+  return {
+    ...base,
+    recovery: {
+      ...(base.recovery && typeof base.recovery === "object" && !Array.isArray(base.recovery)
+        ? (base.recovery as Record<string, unknown>)
+        : {}),
+      status: "NOT_RECOVERED",
+      excluded: true,
+      reason: "MISSING_IN_EXTRACTION",
+      markedAt: new Date().toISOString(),
+      markedBy: source
+    }
+  };
+}
+
+function markAttachmentExcludedByPolicy(current: unknown, source: string, reason: string) {
+  const base = current && typeof current === "object" && !Array.isArray(current) ? (current as Record<string, unknown>) : {};
+  return {
+    ...base,
+    recovery: {
+      ...(base.recovery && typeof base.recovery === "object" && !Array.isArray(base.recovery)
+        ? (base.recovery as Record<string, unknown>)
+        : {}),
+      status: "EXCLUDED_BY_POLICY",
+      excluded: true,
+      reason,
+      markedAt: new Date().toISOString(),
+      markedBy: source
+    }
+  };
+}
+
+async function indexAttachmentArchivePathsForEvidence(input: {
+  caseId: string;
+  evidenceId: string;
+  extractionId?: string;
+  ufdrAbsolutePath: string;
+  scannedFiles: string[];
+  source: string;
+}) {
+  const attachments = await prisma.attachment.findMany({
+    where: {
+      evidenceId: input.evidenceId
+    },
+    select: {
+      id: true,
+      caseId: true,
+      evidenceId: true,
+      fileName: true,
+      archivePath: true,
+      mimeType: true,
+      sizeBytes: true,
+      metadata: true,
+      message: {
+        select: {
+          body: true,
+          chat: { select: { sourceApp: true } }
+        }
+      }
+    }
+  });
+
+  const byBasename = new Map<string, string[]>();
+  for (const entry of input.scannedFiles) {
+    const key = attachmentBasenameLower(entry);
+    if (!key) continue;
+    const list = byBasename.get(key) ?? [];
+    list.push(entry);
+    byBasename.set(key, list);
+  }
+
+  let indexed = 0;
+  let unresolved = 0;
+  let excludedByPolicy = 0;
+  let ambiguous = 0;
+  let auditable = 0;
+  let reviewable = 0;
+  let discardedByQuality = 0;
+  let ocrQueued = 0;
+
+  for (const attachment of attachments) {
+    const initialKind = detectAttachmentMediaKind(attachment);
+    if (initialKind === "audio") continue;
+
+    const filenameForMatch = attachment.fileName?.trim();
+    if (!filenameForMatch && !attachment.archivePath?.trim()) {
+      await prisma.attachment.update({
+        where: { id: attachment.id },
+        data: {
+          metadata: markAttachmentMissingInExtraction(attachment.metadata, input.source) as Prisma.InputJsonValue
+        }
+      });
+      unresolved += 1;
+      continue;
+    }
+
+    const candidates = filenameForMatch ? (byBasename.get(filenameForMatch.toLowerCase()) ?? []) : [];
+    if (candidates.length > 1) ambiguous += 1;
+    const chosen = attachment.archivePath?.trim() || (filenameForMatch ? pickBestAttachmentArchiveMatch(filenameForMatch, candidates) : undefined);
+    if (!chosen) {
+      await prisma.attachment.update({
+        where: { id: attachment.id },
+        data: {
+          metadata: markAttachmentMissingInExtraction(attachment.metadata, input.source) as Prisma.InputJsonValue
+        }
+      });
+      unresolved += 1;
+      continue;
+    }
+
+    const indexedMetadata = {
+      ...((attachment.metadata as Record<string, unknown> | null) ?? {}),
+      indexedArchivePathAt: new Date().toISOString(),
+      indexedArchivePathBy: input.source
+    };
+    const policy = shouldIndexAttachmentByPolicy({
+      mimeType: attachment.mimeType,
+      fileName: attachment.fileName ?? filenameForMatch ?? path.basename(chosen),
+      archivePath: chosen,
+      sizeBytes: attachment.sizeBytes,
+      sourceApp: attachment.message?.chat?.sourceApp,
+      messageBody: attachment.message?.body
+    });
+    let quality: AttachmentQualityDecision;
+    try {
+      quality = await analyzeAttachmentQuality({
+        ufdrAbsolutePath: input.ufdrAbsolutePath,
+        caseId: input.caseId,
+        evidenceId: input.evidenceId,
+        attachmentId: attachment.id,
+        mimeType: attachment.mimeType,
+        fileName: attachment.fileName ?? filenameForMatch ?? path.basename(chosen),
+        archivePath: chosen,
+        sizeBytes: attachment.sizeBytes,
+        sourceApp: attachment.message?.chat?.sourceApp,
+        messageBody: attachment.message?.body
+      });
+    } catch (error) {
+      quality = {
+        status: "REVIEWABLE",
+        score: 0.4,
+        reason: error instanceof Error ? `QUALITY_ANALYSIS_FAILED: ${error.message.slice(0, 120)}` : "QUALITY_ANALYSIS_FAILED",
+        kind: detectAttachmentMediaKind({ mimeType: attachment.mimeType, fileName: attachment.fileName, archivePath: chosen }),
+        bytes: Number(attachment.sizeBytes ?? 0n) || undefined
+      };
+    }
+
+    if (!policy.allowed || quality.status === "DISCARDED") {
+      const reason = !policy.allowed ? policy.reason : quality.reason;
+      await prisma.attachment.update({
+        where: { id: attachment.id },
+        data: {
+          archivePath: null,
+          fileName: attachment.fileName ?? filenameForMatch ?? path.basename(chosen),
+          metadata: markAttachmentExcludedByPolicy(
+            buildQualityMetadata(
+              {
+                ...indexedMetadata,
+                indexedArchivePathCandidate: chosen
+              },
+              quality.status === "DISCARDED" ? quality : { ...quality, status: "DISCARDED", reason: reason ?? quality.reason },
+              input.source
+            ),
+            input.source,
+            reason ?? quality.reason
+          ) as Prisma.InputJsonValue
+        }
+      });
+      if (!policy.allowed) excludedByPolicy += 1;
+      else discardedByQuality += 1;
+      continue;
+    }
+
+    await prisma.attachment.update({
+      where: { id: attachment.id },
+      data: {
+        archivePath: chosen,
+        fileName: attachment.fileName ?? filenameForMatch ?? path.basename(chosen),
+        metadata: buildQualityMetadata(indexedMetadata, quality, input.source) as Prisma.InputJsonValue
+      }
+    });
+    if (quality.status === "AUDITABLE") auditable += 1;
+    if (quality.status === "REVIEWABLE") reviewable += 1;
+    if (quality.ocrCandidate && quality.auditCachePath && (quality.kind === "image" || quality.kind === "pdf")) {
+      const existingOcr = await prisma.ocrDocument.findFirst({
+        where: {
+          attachmentId: attachment.id,
+          sourcePath: quality.auditCachePath
+        },
+        select: { id: true }
+      });
+      if (!existingOcr) {
+        await enqueueOcrDocument({
+          caseId: input.caseId,
+          evidenceId: input.evidenceId,
+          extractionId: input.extractionId,
+          attachmentId: attachment.id,
+          sourcePath: quality.auditCachePath,
+          language: "por"
+        }).catch(() => "");
+        ocrQueued += 1;
+      }
+    }
+    indexed += 1;
+  }
+
+  return {
+    processed: attachments.length,
+    indexed,
+    unresolved,
+    excludedByPolicy,
+    discardedByQuality,
+    auditable,
+    reviewable,
+    ocrQueued,
+    ambiguous
+  };
 }
 
 function isWhatsAppSourceApp(value?: string | null) {
@@ -253,22 +1036,12 @@ async function buildAttachmentTranscriptionEligibilityMap(
   const map = new Map<string, TranscriptionEligibility>();
   for (const row of rows) {
     const sourceApp = row.message?.chat?.sourceApp ?? null;
-    const archiveLooksWhatsApp = isWhatsAppArchivePath(row.archivePath);
-    if (!isWhatsAppSourceApp(sourceApp) && !archiveLooksWhatsApp) {
-      map.set(row.id, {
-        eligible: false,
-        sourceApp,
-        reason: `Descartado pela politica: origem nao WhatsApp (${sourceApp ?? "N/A"}).`
-      });
-      continue;
-    }
-
     const opusByMetadata = hasOpusExtension(row.fileName) || hasOpusExtension(row.archivePath);
     if (!opusByMetadata) {
       map.set(row.id, {
         eligible: false,
         sourceApp,
-        reason: "Descartado pela politica: somente arquivos .opus do WhatsApp sao transcritos."
+        reason: "Descartado pela politica: somente arquivos .opus sao transcritos."
       });
       continue;
     }
@@ -1109,8 +1882,34 @@ async function recordAudioRecoveryBatchCheckpoint(
     await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM "Extraction" WHERE id = ${payload.extractionId} FOR UPDATE`;
     const extraction = await tx.extraction.findUnique({
       where: { id: payload.extractionId },
-      select: { processingDetails: true }
+      select: { processingDetails: true, status: true }
     });
+
+    if (!extraction || extraction.status === "COMPLETED" || extraction.status === "FAILED") {
+      log("info", "Audio recovery checkpoint skipped: extraction is terminal", {
+        extractionId: payload.extractionId,
+        batchIndex: payload.batchIndex,
+        status: extraction?.status ?? null
+      });
+      return {
+        details: toProcessingDetailsRecord(extraction?.processingDetails),
+        completedBatches: [],
+        processedBatches: 0,
+        completedCount: 0,
+        totalBatches: payload.batchTotal,
+        extractedCount: 0,
+        skippedTimeoutCount: 0,
+        skippedErrorCount: 0,
+        transcriptionQueuedCount: 0,
+        transcriptionSkippedMissingCount: 0,
+        transcriptionSkippedPolicyCount: 0,
+        filesPerMin: 0,
+        batchesPerMin: 0,
+        etaSec: null,
+        progress: 100,
+        duplicateCompletion: true
+      };
+    }
     const detailsCurrent = toProcessingDetailsRecord(extraction?.processingDetails);
     const existingRows = await tx.$queryRaw<Array<{ id: string; status: string }>>`
       SELECT "id", "status"
@@ -1858,6 +2657,30 @@ async function processLocalUfdrImport(jobData: LocalUfdrImportJob) {
 
 async function processUfdr(jobData: IngestJob) {
   const payload = ingestJobSchema.parse(jobData);
+  const existingExtraction = await prisma.extraction.findUnique({
+    where: { id: payload.extractionId },
+    select: { status: true, processingDetails: true }
+  });
+
+  if (!existingExtraction) {
+    log("warn", "Ingestion job skipped: extraction not found", {
+      extractionId: payload.extractionId,
+      caseId: payload.caseId,
+      evidenceId: payload.evidenceId
+    });
+    return;
+  }
+
+  if (existingExtraction.status === "COMPLETED" || existingExtraction.status === "FAILED") {
+    log("info", "Ingestion job skipped: extraction is terminal", {
+      extractionId: payload.extractionId,
+      caseId: payload.caseId,
+      evidenceId: payload.evidenceId,
+      status: existingExtraction.status
+    });
+    return;
+  }
+
   const startedAtMs = Date.now();
   let lastPhaseAtMs = startedAtMs;
   const reportXmlInMemory = { value: false };
@@ -2339,6 +3162,14 @@ async function processUfdr(jobData: IngestJob) {
               extractionId: payload.extractionId,
               normalized
             });
+            const attachmentPathIndexResult = await indexAttachmentArchivePathsForEvidence({
+              caseId: payload.caseId,
+              evidenceId: payload.evidenceId,
+              extractionId: payload.extractionId,
+              ufdrAbsolutePath: payload.ufdrAbsolutePath,
+              scannedFiles: scan.files,
+              source: "worker-ingest"
+            });
             phaseTimers.indexFinishedAtMs = Date.now();
 
             await addCustodyEvent({
@@ -2352,7 +3183,8 @@ async function processUfdr(jobData: IngestJob) {
                 audioRecoveryBatchSize: UFDR_AUDIO_RECOVERY_BATCH_SIZE,
                 unresolvedHints: resolvedRecovery.unresolvedHints,
                 timeoutMs: UFDR_AUDIO_EXTRACTION_TIMEOUT_MS,
-                audioExtractionLastArchivePath
+                audioExtractionLastArchivePath,
+                attachmentPathIndexResult
               }
             });
 
@@ -2640,6 +3472,14 @@ async function processUfdr(jobData: IngestJob) {
     extractionId: payload.extractionId,
     normalized
   });
+  const attachmentPathIndexResult = await indexAttachmentArchivePathsForEvidence({
+    caseId: payload.caseId,
+    evidenceId: payload.evidenceId,
+    extractionId: payload.extractionId,
+    ufdrAbsolutePath: payload.ufdrAbsolutePath,
+    scannedFiles: scan.files,
+    source: "worker-ingest"
+  });
   phaseTimers.indexFinishedAtMs = Date.now();
 
   if (WORKER_INGEST_DEBUG_PHASES) {
@@ -2686,7 +3526,8 @@ async function processUfdr(jobData: IngestJob) {
       audio: phaseTimers.audioFinishedAtMs - phaseTimers.audioStartedAtMs,
       index: phaseTimers.indexFinishedAtMs - phaseTimers.indexStartedAtMs,
       total: nowMs - startedAtMs
-    }
+    },
+    attachmentPathIndexResult
   };
 
   await updateExtractionStatus(payload.extractionId, "COMPLETED", {
@@ -2715,6 +3556,7 @@ async function processUfdr(jobData: IngestJob) {
       audioLinkageSummary: transcriptionEnabled ? linkageSummary : audioHintLinkageSummary,
       operationalAlertSnapshot,
       ingestMetrics,
+      attachmentPathIndexResult,
           transcriptionRuntime: {
         enabled: transcriptionEnabled,
         requestedEnabled: transcriptionRequestedEnabled,
@@ -2750,7 +3592,8 @@ async function processUfdr(jobData: IngestJob) {
       audioRecoverySkippedTimeoutCount,
       audioRecoverySkippedErrorCount,
       ufdrCaseContextApplied: Boolean(ufdrCaseContext),
-      operationalAlertSnapshot
+      operationalAlertSnapshot,
+      attachmentPathIndexResult
     }
   });
   await syncCaseTimeline({
@@ -2882,6 +3725,18 @@ async function main() {
 
   worker.on("failed", async (job, error) => {
     if (job?.data?.extractionId) {
+      const extraction = await prisma.extraction.findUnique({
+        where: { id: job.data.extractionId },
+        select: { status: true }
+      });
+      if (extraction?.status === "COMPLETED") {
+        log("warn", "Job failure ignored: extraction is already completed", {
+          jobId: job.id,
+          extractionId: job.data.extractionId,
+          error: error.message
+        });
+        return;
+      }
       await updateExtractionStatus(job.data.extractionId, "FAILED", {
         reportFound: false,
         reportError: error.message,

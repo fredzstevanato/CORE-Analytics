@@ -22,13 +22,13 @@ const statusesSchema = z
   .optional()
   .transform((value) => {
     if (!value) {
-      return ["active", "waiting", "delayed", "prioritized", "failed"] as JobType[];
+      return ["active", "waiting", "delayed", "prioritized", "paused", "failed"] as JobType[];
     }
     const parsed = value
       .split(",")
       .map((part) => part.trim())
       .filter(Boolean) as JobType[];
-    return parsed.length > 0 ? parsed : (["active", "waiting", "delayed", "prioritized", "failed"] as JobType[]);
+    return parsed.length > 0 ? parsed : (["active", "waiting", "delayed", "prioritized", "paused", "failed"] as JobType[]);
   });
 
 const querySchema = z.object({
@@ -41,7 +41,17 @@ const actionSchema = z.object({
   queue: z.string().optional(),
   jobId: z.string().optional(),
   referenceLabel: z.string().optional(),
-  action: z.enum(["stop", "remove", "retry", "pause_queue", "resume_queue", "stop_by_reference", "remove_by_reference"])
+  maxAgeHours: z.coerce.number().min(1).max(720).optional(),
+  action: z.enum([
+    "stop",
+    "remove",
+    "retry",
+    "pause_queue",
+    "resume_queue",
+    "stop_by_reference",
+    "remove_by_reference",
+    "clean_old_paused"
+  ])
 });
 
 const queueRegistry = {
@@ -367,7 +377,62 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Payload invalido para acao de job." }, { status: 400 });
   }
 
-  const { queue: queueName, action, jobId, referenceLabel } = parsed.data;
+  const { queue: queueName, action, jobId, referenceLabel, maxAgeHours } = parsed.data;
+
+  if (action === "clean_old_paused") {
+    const selectedQueues = queueName
+      ? isQueueName(queueName)
+        ? [queueName]
+        : null
+      : (Object.keys(queueRegistry) as QueueName[]);
+
+    if (!selectedQueues) {
+      return NextResponse.json({ error: "Fila informada nao existe." }, { status: 404 });
+    }
+
+    const ageHours = maxAgeHours ?? 24;
+    const cutoff = Date.now() - ageHours * 60 * 60 * 1000;
+    let matched = 0;
+    let removed = 0;
+    let failed = 0;
+    const byQueue: Array<{ queue: QueueName; matched: number; removed: number; failed: number }> = [];
+
+    for (const queueKey of selectedQueues) {
+      const queue = queueRegistry[queueKey];
+      const jobs = await queue.getJobs(["paused"], 0, 50000, true);
+      let queueMatched = 0;
+      let queueRemoved = 0;
+      let queueFailed = 0;
+
+      for (const job of jobs) {
+        if (job.timestamp > cutoff) continue;
+        matched += 1;
+        queueMatched += 1;
+        try {
+          await job.remove();
+          removed += 1;
+          queueRemoved += 1;
+        } catch {
+          failed += 1;
+          queueFailed += 1;
+        }
+      }
+
+      byQueue.push({ queue: queueKey, matched: queueMatched, removed: queueRemoved, failed: queueFailed });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      action,
+      queue: queueName ?? "ALL",
+      maxAgeHours: ageHours,
+      matched,
+      removed,
+      failed,
+      byQueue,
+      message: `Limpeza concluida. Removidos ${removed}/${matched} jobs pausados com mais de ${ageHours}h.`
+    });
+  }
 
   if (action === "stop_by_reference" || action === "remove_by_reference") {
     if (!referenceLabel || !referenceLabel.trim()) {
