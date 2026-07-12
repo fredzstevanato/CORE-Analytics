@@ -55,7 +55,7 @@ Se a operacao for pelo botao "Atualizar via Docker Hub", a nova versao precisa e
 1. Build da imagem local.
 2. Tag conforme a estrategia adotada.
 3. Push para o Docker Hub ou registry privado.
-4. Atualizar `CORE_IMAGE` na release remota para apontar para a nova tag.
+4. Atualizar `CORE_IMAGE` na release remota para apontar para `latest` quando quiser sempre consumir a versao mais recente, ou para uma tag fixa quando quiser travar uma release.
 
 ### 1.7 Subir containers com a nova imagem
 
@@ -108,6 +108,7 @@ No diretorio da release remota:
 - Atualizacao via Docker Hub:
    - Usa o botao "Atualizar via Docker Hub".
    - Indicado quando `CORE_IMAGE` aponta para uma imagem publicada no registry.
+   - Padrao recomendado: `CORE_IMAGE=...:latest`.
 
 ### 2.3 Executar atualizacao
 
@@ -172,7 +173,7 @@ Verificar:
 ### Desenvolvedor
 
 - Codigo no GitHub atualizado.
-- Imagem core-analytics:local gerada.
+- Imagem core-analytics:latest gerada ou tag fixa equivalente publicada no Docker Hub.
 - Imagem transferida e carregada no remoto.
 - COMPOSE_WORKDIR definido no .env remoto.
 - Containers atualizados e health 200.

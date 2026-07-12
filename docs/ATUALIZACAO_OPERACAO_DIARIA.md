@@ -13,6 +13,7 @@ Use este roteiro para atualizacoes operacionais no dia a dia, sem entrar em deta
    - Pular git pull: marcar em ambiente de release por imagem.
    - Pular backup: manter desmarcado (recomendado).
    - Timeout health: 300 segundos (aumentar se necessario).
+   - Se usar Docker Hub, o padrao recomendado e `CORE_IMAGE=...:latest`.
 4. Clicar em Executar atualizacao.
 5. Acompanhar o Console de atualizacao na tela ate finalizar.
 
