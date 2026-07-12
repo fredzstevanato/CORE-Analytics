@@ -95,17 +95,17 @@ function FieldGroup({
   onChange: (key: string, value: string) => void;
 }) {
   return (
-    <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3">
+    <div className="space-y-3 rounded-md border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
       <p className="text-sm font-semibold">{title}</p>
       <div className="grid gap-3 lg:grid-cols-2">
         {keys.map((key) => (
           <label key={key} className={key === "PDF_OCR_COMMAND_ARGS" ? "space-y-1 lg:col-span-2" : "space-y-1"}>
-            <span className="text-xs font-medium text-zinc-700">{key}</span>
+            <span className="text-xs font-medium text-zinc-700 dark:text-zinc-200">{key}</span>
             <Input value={values[key] ?? ""} onChange={(event) => onChange(key, event.target.value)} spellCheck={false} />
             {recommendations[key] && recommendations[key] !== values[key] ? (
               <button
                 type="button"
-                className="text-left text-xs text-blue-700 hover:underline"
+                className="text-left text-xs text-blue-700 hover:underline dark:text-blue-300"
                 onClick={() => onChange(key, recommendations[key] ?? "")}
               >
                 Usar sugerido: {recommendations[key]}
@@ -198,11 +198,11 @@ export function SystemConfigPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-zinc-200 bg-white p-3">
+      <div className="rounded-md border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-1">
             <p className="text-sm font-semibold">Sistema e .env</p>
-            <p className="text-xs text-zinc-600">Arquivo ativo: {payload?.envPath ?? "carregando..."}</p>
+            <p className="text-xs text-zinc-600 dark:text-zinc-300">Arquivo ativo: {payload?.envPath ?? "carregando..."}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant={targetOs === "windows" ? "default" : "outline"} onClick={() => void switchTargetOs("windows")}>
@@ -223,29 +223,29 @@ export function SystemConfigPanel() {
 
       {payload ? (
         <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-md border border-zinc-200 bg-white p-3 text-sm">
-            <Cpu className="mb-2 h-4 w-4 text-zinc-600" />
+          <div className="rounded-md border border-zinc-200 bg-white p-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <Cpu className="mb-2 h-4 w-4 text-zinc-600 dark:text-zinc-300" />
             <p className="font-medium">{payload.hardware.cpuCount} threads</p>
-            <p className="text-xs text-zinc-500">{payload.hardware.cpuModel}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">{payload.hardware.cpuModel}</p>
           </div>
-          <div className="rounded-md border border-zinc-200 bg-white p-3 text-sm">
-            <HardDrive className="mb-2 h-4 w-4 text-zinc-600" />
+          <div className="rounded-md border border-zinc-200 bg-white p-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <HardDrive className="mb-2 h-4 w-4 text-zinc-600 dark:text-zinc-300" />
             <p className="font-medium">{formatBytes(payload.hardware.totalMemoryBytes)} RAM</p>
-            <p className="text-xs text-zinc-500">Livre agora: {formatBytes(payload.hardware.freeMemoryBytes)}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">Livre agora: {formatBytes(payload.hardware.freeMemoryBytes)}</p>
           </div>
-          <div className="rounded-md border border-zinc-200 bg-white p-3 text-sm">
-            <HardDrive className="mb-2 h-4 w-4 text-zinc-600" />
+          <div className="rounded-md border border-zinc-200 bg-white p-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <HardDrive className="mb-2 h-4 w-4 text-zinc-600 dark:text-zinc-300" />
             <p className="font-medium">{diskSummary}</p>
-            <p className="text-xs text-zinc-500">Perfil sugerido: {profileLabel(payload.recommendations.profile)}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">Perfil sugerido: {profileLabel(payload.recommendations.profile)}</p>
           </div>
         </div>
       ) : null}
 
-      <div className="rounded-md border border-zinc-200 bg-white p-3">
+      <div className="rounded-md border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold">Ajuste adaptativo para {osLabel(targetOs)}</p>
-            <p className="text-xs text-zinc-600">
+            <p className="text-xs text-zinc-600 dark:text-zinc-300">
               Exemplo UFDR: {recommendationValues.exampleUfdrFolder ?? ""} ou {recommendationValues.exampleUfdrFile ?? ""}
             </p>
           </div>
@@ -266,7 +266,7 @@ export function SystemConfigPanel() {
           <Save className="h-4 w-4" />
           {busy ? "Salvando..." : "Salvar no .env"}
         </Button>
-        {message ? <p className="text-sm text-emerald-700">{message}</p> : null}
+        {message ? <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p> : null}
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
       </div>
     </div>

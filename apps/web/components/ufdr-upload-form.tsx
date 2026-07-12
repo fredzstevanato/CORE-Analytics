@@ -300,7 +300,7 @@ export function UfdrUploadForm({
       return;
     }
     if (!isLikelyAbsolutePath(normalizedPath)) {
-      setError("Informe um caminho absoluto valido da pasta descompactada (ex.: C:\\pasta\\EXTRACTI.2026-...).");
+      setError("Informe caminho absoluto valido. Em Docker no Windows use /mnt/ufdr/...; fora do Docker pode usar C:\\... .");
       return;
     }
     setLoadingLocalImport(true);
@@ -390,10 +390,10 @@ export function UfdrUploadForm({
           <Input
             value={localFilePath}
             onChange={(event) => setLocalFilePath(normalizePathInput(event.target.value))}
-            placeholder="C:\\laudos\\EXTRACTI.2026-...\\  ou  C:\\laudos\\extração.ufdr"
+            placeholder="/mnt/ufdr/LAUDO/RELATORIO.ufdr  ou  /mnt/ufdr/EXTRACTI.2026-..."
             required
           />
-          <p className="text-xs text-zinc-500">Aceita a raiz da pasta descompactada (com report.xml) ou o arquivo .ufdr.</p>
+          <p className="text-xs text-zinc-500">Aceita a raiz da pasta descompactada (com report.xml) ou o arquivo .ufdr. Em Docker no Windows, use o caminho montado em /mnt/ufdr.</p>
           {pathSelectionNotice ? <p className="text-xs text-amber-700">{pathSelectionNotice}</p> : null}
         </div>
         <div className="grid gap-3 sm:grid-cols-3">

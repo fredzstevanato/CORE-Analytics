@@ -61,7 +61,7 @@ export function MessageAttachmentGallery({ attachments }: { attachments: Attachm
                 key={attachment.id}
                 type="button"
                 onClick={() => setOpenId(attachment.id)}
-                className="overflow-hidden rounded border border-zinc-300 bg-white"
+                className="overflow-hidden rounded border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900"
                 title={label}
               >
                 <img
@@ -80,7 +80,7 @@ export function MessageAttachmentGallery({ attachments }: { attachments: Attachm
                 key={attachment.id}
                 type="button"
                 onClick={() => setOpenId(attachment.id)}
-                className="rounded border border-zinc-300 bg-zinc-100 px-2 py-1 text-left text-[11px] text-zinc-700 hover:bg-zinc-200"
+                className="rounded border border-zinc-300 bg-zinc-100 px-2 py-1 text-left text-[11px] text-zinc-700 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
                 title={label}
               >
                 ▶ {label}
@@ -93,7 +93,7 @@ export function MessageAttachmentGallery({ attachments }: { attachments: Attachm
               key={attachment.id}
               type="button"
               onClick={() => setOpenId(attachment.id)}
-              className="rounded border border-zinc-300 bg-zinc-100 px-2 py-1 text-left text-[11px] text-zinc-700 hover:bg-zinc-200"
+              className="rounded border border-zinc-300 bg-zinc-100 px-2 py-1 text-left text-[11px] text-zinc-700 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
               title={label}
             >
               {label}
@@ -101,7 +101,7 @@ export function MessageAttachmentGallery({ attachments }: { attachments: Attachm
           );
         })}
         {hiddenCount > 0 ? (
-          <span className="rounded border border-zinc-200 bg-zinc-100 px-2 py-1 text-[11px] text-zinc-600">
+          <span className="rounded border border-zinc-200 bg-zinc-100 px-2 py-1 text-[11px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
             {hiddenCount} anexo(s) nao recuperavel(is) ocultado(s)
           </span>
         ) : null}
@@ -110,22 +110,22 @@ export function MessageAttachmentGallery({ attachments }: { attachments: Attachm
       {active ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpenId(null)}>
           <div
-            className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-lg bg-white shadow-xl"
+            className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-lg bg-white shadow-xl dark:bg-zinc-900"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2">
+            <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-700">
               <p className="truncate text-sm font-medium">{active.fileName ?? active.archivePath ?? "Anexo"}</p>
               <div className="flex items-center gap-2">
                 <a
                   href={`/api/attachments/${active.id}/content?download=1`}
-                  className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100"
+                  className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
                 >
                   Download
                 </a>
                 <button
                   type="button"
                   onClick={() => setOpenId(null)}
-                  className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100"
+                  className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
                 >
                   Fechar
                 </button>
@@ -147,12 +147,12 @@ export function MessageAttachmentGallery({ attachments }: { attachments: Attachm
                 <iframe
                   title={active.fileName ?? "PDF"}
                   src={`/api/attachments/${active.id}/content`}
-                  className="h-[80vh] w-full rounded border border-zinc-200"
+                  className="h-[80vh] w-full rounded border border-zinc-200 dark:border-zinc-700"
                 />
               ) : (
-                <div className="space-y-2 text-sm text-zinc-700">
+                <div className="space-y-2 text-sm text-zinc-700 dark:text-zinc-200">
                   <p>Preview inline nao disponivel para este tipo de arquivo.</p>
-                  <a href={`/api/attachments/${active.id}/content?download=1`} className="text-blue-700 hover:underline">
+                  <a href={`/api/attachments/${active.id}/content?download=1`} className="text-blue-700 hover:underline dark:text-blue-300">
                     Clique para baixar o arquivo
                   </a>
                 </div>

@@ -34,6 +34,10 @@ function isUfdrFilePath(value: string) {
   return value.toLowerCase().endsWith(".ufdr");
 }
 
+function isWindowsStyleAbsolutePath(value: string) {
+  return /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
 function buildStorageDirectoryTarget(input: { caseId: string; evidenceId: string; sourcePath: string }) {
   const safeName = basename(input.sourcePath).replace(/[^a-zA-Z0-9._-]/g, "_") || "ufdr-extracted";
   const relativeDir = path.join(
@@ -70,8 +74,11 @@ export async function POST(request: Request) {
     const sourcePath = normalizePathInput(body.filePath);
     const explicitOriginalUfdrPath = body.originalUfdrFilePath ? normalizePathInput(body.originalUfdrFilePath) : undefined;
     if (!path.isAbsolute(sourcePath)) {
+      const dockerWindowsHint = isWindowsStyleAbsolutePath(sourcePath)
+        ? " Em instalacao Docker no Windows, informe o caminho montado no container (ex.: /mnt/ufdr/LAUDO/RELATORIO.ufdr), nao C:\\..."
+        : "";
       return NextResponse.json(
-        { error: "Caminho invalido: informe caminho absoluto de uma pasta descompactada ou arquivo .ufdr." },
+        { error: `Caminho invalido: informe caminho absoluto de uma pasta descompactada ou arquivo .ufdr.${dockerWindowsHint}` },
         { status: 400 }
       );
     }

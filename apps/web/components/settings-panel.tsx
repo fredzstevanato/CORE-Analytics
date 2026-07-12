@@ -198,14 +198,14 @@ export function SettingsPanel() {
 
   return (
     <div className="space-y-4">
-      <form onSubmit={saveProviderKeys} className="space-y-3 rounded border border-zinc-200 bg-white p-3">
+      <form onSubmit={saveProviderKeys} className="space-y-3 rounded border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
         <p className="text-sm font-semibold">Chaves dos provedores online (OpenAI + AssemblyAI)</p>
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-1">
-            <p className="text-xs font-medium text-zinc-700">OPENAI_API_KEY</p>
+            <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">OPENAI_API_KEY</p>
             <input
               type="password"
-              className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+              className="w-full rounded border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
               placeholder="sk-..."
               value={openAiKey}
               onChange={(event) => setOpenAiKey(event.target.value)}
@@ -214,10 +214,10 @@ export function SettingsPanel() {
             />
           </div>
           <div className="space-y-1">
-            <p className="text-xs font-medium text-zinc-700">ASSEMBLYAI_API_KEY</p>
+            <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">ASSEMBLYAI_API_KEY</p>
             <input
               type="password"
-              className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+              className="w-full rounded border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
               placeholder="xxxxx"
               value={assemblyAiKey}
               onChange={(event) => setAssemblyAiKey(event.target.value)}
@@ -226,7 +226,7 @@ export function SettingsPanel() {
             />
           </div>
         </div>
-        <p className="text-xs text-zinc-600">
+        <p className="text-xs text-zinc-600 dark:text-zinc-300">
           As chaves ficam criptografadas no banco. Com chave valida, o provider correspondente e liberado nos seletores.
         </p>
         <Button type="submit" disabled={busy || (!openAiKey.trim() && !assemblyAiKey.trim())}>
@@ -234,7 +234,7 @@ export function SettingsPanel() {
         </Button>
       </form>
 
-      <div className="space-y-3 rounded border border-zinc-200 bg-white p-3">
+      <div className="space-y-3 rounded border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-semibold">Creditos e status dos provedores</p>
           <Button type="button" variant="outline" disabled={creditsBusy} onClick={() => void loadProviderCredits()}>
@@ -242,37 +242,37 @@ export function SettingsPanel() {
           </Button>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <div className="rounded border border-zinc-200 p-3 text-xs">
+          <div className="rounded border border-zinc-200 p-3 text-xs dark:border-zinc-700">
             <p className="font-medium">OpenAI</p>
-            <p className="text-zinc-600">Configurado: {providerCredits?.openai?.configured ? "sim" : "nao"}</p>
-            <p className="text-zinc-600">Status API: {providerCredits?.openai?.ok ? "ok" : "indisponivel"}</p>
-            <p className="text-zinc-600">Creditos estimados: {formatUsd(providerCredits?.openai?.creditsUsd)}</p>
-            <p className="text-zinc-500">Fonte: {providerCredits?.openai?.source ?? "n/d"}</p>
-            {providerCredits?.openai?.message ? <p className="text-amber-700">{providerCredits.openai.message}</p> : null}
+            <p className="text-zinc-600 dark:text-zinc-300">Configurado: {providerCredits?.openai?.configured ? "sim" : "nao"}</p>
+            <p className="text-zinc-600 dark:text-zinc-300">Status API: {providerCredits?.openai?.ok ? "ok" : "indisponivel"}</p>
+            <p className="text-zinc-600 dark:text-zinc-300">Creditos estimados: {formatUsd(providerCredits?.openai?.creditsUsd)}</p>
+            <p className="text-zinc-500 dark:text-zinc-400">Fonte: {providerCredits?.openai?.source ?? "n/d"}</p>
+            {providerCredits?.openai?.message ? <p className="text-amber-700 dark:text-amber-300">{providerCredits.openai.message}</p> : null}
           </div>
-          <div className="rounded border border-zinc-200 p-3 text-xs">
+          <div className="rounded border border-zinc-200 p-3 text-xs dark:border-zinc-700">
             <p className="font-medium">AssemblyAI</p>
-            <p className="text-zinc-600">Configurado: {providerCredits?.assemblyai?.configured ? "sim" : "nao"}</p>
-            <p className="text-zinc-600">Status API: {providerCredits?.assemblyai?.ok ? "ok" : "indisponivel"}</p>
-            <p className="text-zinc-600">Creditos estimados: {formatUsd(providerCredits?.assemblyai?.creditsUsd)}</p>
-            <p className="text-zinc-500">Fonte: {providerCredits?.assemblyai?.source ?? "n/d"}</p>
-            {providerCredits?.assemblyai?.message ? <p className="text-amber-700">{providerCredits.assemblyai.message}</p> : null}
+            <p className="text-zinc-600 dark:text-zinc-300">Configurado: {providerCredits?.assemblyai?.configured ? "sim" : "nao"}</p>
+            <p className="text-zinc-600 dark:text-zinc-300">Status API: {providerCredits?.assemblyai?.ok ? "ok" : "indisponivel"}</p>
+            <p className="text-zinc-600 dark:text-zinc-300">Creditos estimados: {formatUsd(providerCredits?.assemblyai?.creditsUsd)}</p>
+            <p className="text-zinc-500 dark:text-zinc-400">Fonte: {providerCredits?.assemblyai?.source ?? "n/d"}</p>
+            {providerCredits?.assemblyai?.message ? <p className="text-amber-700 dark:text-amber-300">{providerCredits.assemblyai.message}</p> : null}
           </div>
         </div>
       </div>
 
-      <form onSubmit={saveTextSetting} className="space-y-3 rounded border border-zinc-200 bg-white p-3">
+      <form onSubmit={saveTextSetting} className="space-y-3 rounded border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
         <p className="text-sm font-semibold">Salvar chave/configuracao textual</p>
         <div className="grid gap-3 md:grid-cols-2">
           <input
-            className="rounded border border-zinc-300 px-3 py-2 text-sm"
+            className="rounded border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             placeholder="KEY (ex.: OPENAI_CASE_CONTEXT_MODEL)"
             value={form.key}
             onChange={(event) => setForm((current) => ({ ...current, key: event.target.value }))}
             required
           />
           <input
-            className="rounded border border-zinc-300 px-3 py-2 text-sm"
+            className="rounded border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             placeholder="Categoria"
             value={form.category}
             onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}
@@ -280,7 +280,7 @@ export function SettingsPanel() {
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <input
-            className="rounded border border-zinc-300 px-3 py-2 text-sm"
+            className="rounded border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             placeholder="Rotulo"
             value={form.label}
             onChange={(event) => setForm((current) => ({ ...current, label: event.target.value }))}
@@ -290,12 +290,13 @@ export function SettingsPanel() {
               type="checkbox"
               checked={form.isSecret}
               onChange={(event) => setForm((current) => ({ ...current, isSecret: event.target.checked }))}
+              className="accent-zinc-900 dark:accent-zinc-100"
             />
             Valor sigiloso (criptografado)
           </label>
         </div>
         <textarea
-          className="min-h-[100px] w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+          className="min-h-[100px] w-full rounded border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
           placeholder="Valor (texto/JSON)"
           value={form.valueText}
           onChange={(event) => setForm((current) => ({ ...current, valueText: event.target.value }))}
@@ -305,11 +306,11 @@ export function SettingsPanel() {
         </Button>
       </form>
 
-      <form onSubmit={saveFileSetting} className="space-y-3 rounded border border-zinc-200 bg-white p-3">
+      <form onSubmit={saveFileSetting} className="space-y-3 rounded border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
         <p className="text-sm font-semibold">Salvar arquivo de configuracao no banco</p>
         <input
           type="file"
-          className="rounded border border-zinc-300 px-3 py-2 text-sm"
+          className="rounded border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
           onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           required
         />
@@ -320,13 +321,13 @@ export function SettingsPanel() {
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
-      <div className="space-y-2 rounded border border-zinc-200 bg-white p-3">
+      <div className="space-y-2 rounded border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
         <p className="text-sm font-semibold">Repositorio de configuracoes (Banco)</p>
-        {rows.length === 0 ? <p className="text-sm text-zinc-500">Nenhuma configuracao cadastrada.</p> : null}
+        {rows.length === 0 ? <p className="text-sm text-zinc-500 dark:text-zinc-400">Nenhuma configuracao cadastrada.</p> : null}
         {rows.map((row) => (
-          <div key={row.id} className="rounded border border-zinc-100 p-2 text-xs">
+          <div key={row.id} className="rounded border border-zinc-100 p-2 text-xs dark:border-zinc-700">
             <p className="font-medium">{row.key}</p>
-            <p className="text-zinc-500">
+            <p className="text-zinc-500 dark:text-zinc-400">
               {row.category} • {row.isSecret ? "Segredo" : "Aberto"} • {row.hasValue ? "Com valor" : "Sem valor"}
             </p>
             {row.fileName ? (
@@ -334,7 +335,7 @@ export function SettingsPanel() {
                 href={`/api/settings/${encodeURIComponent(row.key)}/content`}
                 target="_blank"
                 rel="noreferrer"
-                className="text-blue-700 underline"
+                className="text-blue-700 underline dark:text-blue-300"
               >
                 Baixar arquivo ({row.fileName})
               </a>

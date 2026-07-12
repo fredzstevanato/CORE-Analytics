@@ -243,24 +243,24 @@ export function OperationsJobsPanel() {
   }, [selectedJobs]);
 
   return (
-    <div className="space-y-3 rounded border border-zinc-200 bg-white p-3">
+    <div className="space-y-3 rounded border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm font-semibold">Controle de jobs dos workers</p>
         <Button type="button" size="sm" variant="outline" onClick={() => void load()} disabled={busy}>
           {busy ? "Atualizando..." : "Atualizar agora"}
         </Button>
-        <label className="ml-auto flex items-center gap-2 text-xs text-zinc-600">
-          <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
+        <label className="ml-auto flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+          <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} className="accent-zinc-900 dark:accent-zinc-100" />
           Auto (10s)
         </label>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <label className="text-xs text-zinc-600">Fila:</label>
+        <label className="text-xs text-zinc-600 dark:text-zinc-300">Fila:</label>
         <select
           value={queueFilter}
           onChange={(event) => setQueueFilter(event.target.value)}
-          className="rounded border border-zinc-300 px-2 py-1 text-xs"
+          className="rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
         >
           {availableQueues.map((queueName) => (
             <option key={queueName} value={queueName}>
@@ -268,13 +268,13 @@ export function OperationsJobsPanel() {
             </option>
           ))}
         </select>
-        <label className="ml-2 text-xs text-zinc-600">Filtro caso + UFDR:</label>
+        <label className="ml-2 text-xs text-zinc-600 dark:text-zinc-300">Filtro caso + UFDR:</label>
         <input
           type="text"
           value={referenceFilter}
           onChange={(event) => setReferenceFilter(event.target.value)}
           placeholder="Ex.: 150.5.2021.15259 ou Xiaomi Redmi"
-          className="min-w-80 rounded border border-zinc-300 px-2 py-1 text-xs"
+          className="min-w-80 rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
         />
         <Button
           type="button"
@@ -297,7 +297,7 @@ export function OperationsJobsPanel() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-zinc-600">Selecionados: {selectedCount}</span>
+        <span className="text-xs text-zinc-600 dark:text-zinc-300">Selecionados: {selectedCount}</span>
         <Button
           type="button"
           size="sm"
@@ -318,18 +318,18 @@ export function OperationsJobsPanel() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 p-2">
-        <span className="text-xs font-medium text-amber-900">Manutencao de pausados</span>
-        <label className="text-xs text-amber-900">Mais antigos que:</label>
+      <div className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 p-2 dark:border-amber-800 dark:bg-amber-950/40">
+        <span className="text-xs font-medium text-amber-900 dark:text-amber-300">Manutencao de pausados</span>
+        <label className="text-xs text-amber-900 dark:text-amber-300">Mais antigos que:</label>
         <input
           type="number"
           min={1}
           max={720}
           value={pausedMaxAgeHours}
           onChange={(event) => setPausedMaxAgeHours(Math.max(1, Math.min(720, Number(event.target.value) || 24)))}
-          className="w-20 rounded border border-amber-300 px-2 py-1 text-xs"
+          className="w-20 rounded border border-amber-300 px-2 py-1 text-xs dark:border-amber-700 dark:bg-zinc-900 dark:text-zinc-100"
         />
-        <span className="text-xs text-amber-900">horas</span>
+        <span className="text-xs text-amber-900 dark:text-amber-300">horas</span>
         <Button
           type="button"
           size="sm"
@@ -341,12 +341,12 @@ export function OperationsJobsPanel() {
         </Button>
       </div>
 
-      {data ? <p className="text-xs text-zinc-500">Ultima leitura: {new Date(data.timestamp).toLocaleString("pt-BR")}</p> : null}
-      {notice ? <p className="text-xs text-emerald-700">{notice}</p> : null}
+      {data ? <p className="text-xs text-zinc-500 dark:text-zinc-400">Ultima leitura: {new Date(data.timestamp).toLocaleString("pt-BR")}</p> : null}
+      {notice ? <p className="text-xs text-emerald-700 dark:text-emerald-300">{notice}</p> : null}
       {error ? <p className="text-xs text-red-700">{error}</p> : null}
 
       {data?.queues.map((queueRow) => (
-        <div key={queueRow.queue} className="space-y-2 rounded border border-zinc-200 p-2">
+        <div key={queueRow.queue} className="space-y-2 rounded border border-zinc-200 p-2 dark:border-zinc-700">
           {(() => {
             const filter = referenceFilter.trim().toLowerCase();
             const visibleJobs =
@@ -361,7 +361,7 @@ export function OperationsJobsPanel() {
               <>
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs font-semibold">{queueRow.queue}</p>
-            <span className="text-xs text-zinc-600">
+            <span className="text-xs text-zinc-600 dark:text-zinc-300">
               workers {queueRow.workers} | waiting {queueRow.counts.waiting ?? 0} | active {queueRow.counts.active ?? 0} | failed {queueRow.counts.failed ?? 0}
               {" "} | paused {queueRow.counts.paused ?? 0}
             </span>
@@ -369,11 +369,12 @@ export function OperationsJobsPanel() {
               {queueRow.paused ? "PAUSADA" : "ATIVA"}
             </span>
             <div className="ml-auto flex items-center gap-2">
-              <label className="flex items-center gap-2 text-xs text-zinc-600">
+              <label className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
                 <input
                   type="checkbox"
                   checked={allVisibleSelected}
                   disabled={visibleJobs.length === 0}
+                  className="accent-zinc-900 dark:accent-zinc-100"
                   onChange={(event) => {
                     const checked = event.target.checked;
                     setSelectedJobs((prev) => {
@@ -407,12 +408,12 @@ export function OperationsJobsPanel() {
           </div>
 
           {visibleJobs.length === 0 ? (
-            <p className="text-xs text-zinc-500">Sem jobs no recorte atual.</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">Sem jobs no recorte atual.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-zinc-200 text-left">
+                  <tr className="border-b border-zinc-200 text-left dark:border-zinc-700">
                     <th className="px-2 py-1">Sel.</th>
                     <th className="px-2 py-1">Job</th>
                     <th className="px-2 py-1">Estado</th>
@@ -429,11 +430,12 @@ export function OperationsJobsPanel() {
                     const keyBase = `${queueRow.queue}:${job.id}`;
                     const selected = selectedJobs[keyBase] ?? false;
                     return (
-                      <tr key={`${queueRow.queue}:${job.id}`} className="border-b border-zinc-100 align-top">
+                      <tr key={`${queueRow.queue}:${job.id}`} className="border-b border-zinc-100 align-top dark:border-zinc-800">
                         <td className="px-2 py-1">
                           <input
                             type="checkbox"
                             checked={selected}
+                            className="accent-zinc-900 dark:accent-zinc-100"
                             onChange={(event) => {
                               const checked = event.target.checked;
                               setSelectedJobs((prev) => ({ ...prev, [keyBase]: checked }));
@@ -442,13 +444,13 @@ export function OperationsJobsPanel() {
                         </td>
                         <td className="px-2 py-1">
                           <p className="font-medium">{job.name}</p>
-                          <p className="text-zinc-500">{job.id}</p>
+                          <p className="text-zinc-500 dark:text-zinc-400">{job.id}</p>
                           {job.failedReason ? <p className="text-red-700">{job.failedReason}</p> : null}
                         </td>
                         <td className="px-2 py-1">{job.state}</td>
                         <td className="px-2 py-1">
                           <p>{job.referenceLabel}</p>
-                          <p className="text-zinc-500">extraction {job.data.extractionId ?? "-"}</p>
+                          <p className="text-zinc-500 dark:text-zinc-400">extraction {job.data.extractionId ?? "-"}</p>
                         </td>
                         <td className="px-2 py-1">{job.attemptsMade}</td>
                         <td className="px-2 py-1">{formatDate(job.timestamp)}</td>
