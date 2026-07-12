@@ -11,6 +11,24 @@ export type SessionUser = {
 
 const COOKIE_NAME = "core_session";
 
+function parseBooleanEnv(value: string | undefined): boolean | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return null;
+}
+
+function shouldUseSecureCookie() {
+  const explicit = parseBooleanEnv(process.env.SESSION_COOKIE_SECURE);
+  if (explicit !== null) return explicit;
+
+  const baseUrl = process.env.APP_BASE_URL?.trim().toLowerCase() ?? "";
+  if (baseUrl.startsWith("https://")) return true;
+
+  return false;
+}
+
 function getSessionSecret() {
   const secret = process.env.SESSION_SECRET?.trim();
   if (secret) return secret;
@@ -57,7 +75,7 @@ export async function setSessionCookie(user: SessionUser) {
   store.set(COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookie(),
     path: "/",
     maxAge: 60 * 60 * 24 * 7
   });
