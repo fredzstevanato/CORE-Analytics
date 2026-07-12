@@ -11,12 +11,18 @@ $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $root
 
 $envPath = Join-Path $root ".env"
+$composeDir = if ($env:COMPOSE_WORKDIR -and (Test-Path "/host/compose")) {
+  Write-Host "==> Running in container mode. Compose workdir: $env:COMPOSE_WORKDIR (mounted at /host/compose)"
+  "/host/compose"
+} else {
+  $root.Path
+}
 
 function Import-DotEnv {
   param([string]$Path)
 
   if (-not (Test-Path $Path)) {
-    throw "Missing .env file in $root."
+    throw "Missing .env file in $composeDir."
   }
 
   Get-Content $Path | ForEach-Object {
@@ -74,7 +80,7 @@ function Wait-ContainerHealthy {
   throw "Timed out waiting for $ContainerName to become healthy after $TimeoutSeconds seconds."
 }
 
-Import-DotEnv -Path $envPath
+Import-DotEnv -Path (Join-Path $composeDir ".env")
 
 if ([string]::IsNullOrWhiteSpace($Image)) {
   $Image = $env:CORE_IMAGE
@@ -99,8 +105,9 @@ Invoke-Step "Checking Docker" {
 $env:CORE_IMAGE = $Image
 
 $composeFiles = @(
-  "-f", "docker-compose.yml",
-  "-f", "docker-compose.app.yml"
+  "--project-directory", $composeDir,
+  "-f", (Join-Path $composeDir "docker-compose.yml"),
+  "-f", (Join-Path $composeDir "docker-compose.app.yml")
 )
 
 Invoke-Step "Validating Docker Compose configuration" {
@@ -109,13 +116,18 @@ Invoke-Step "Validating Docker Compose configuration" {
 
 if (-not $SkipBackup) {
   Invoke-Step "Preparing PostgreSQL for backup" {
-    docker compose -f docker-compose.yml up -d postgres
+    docker compose --project-directory $composeDir -f (Join-Path $composeDir "docker-compose.yml") up -d postgres
     Wait-ContainerHealthy -ContainerName "core-postgres" -TimeoutSeconds $HealthTimeoutSeconds
   }
 
   Invoke-Step "Creating PostgreSQL backup before update" {
+    $storageRoot = $env:STORAGE_ROOT
+    if ([string]::IsNullOrWhiteSpace($storageRoot)) {
+      $storageRoot = "/data/storage"
+    }
+
     $backupDir = if ([string]::IsNullOrWhiteSpace($env:CORE_BACKUP_DIR)) {
-      Join-Path $root "backups"
+      Join-Path $storageRoot "backups"
     } else {
       $env:CORE_BACKUP_DIR
     }
@@ -125,9 +137,9 @@ if (-not $SkipBackup) {
     $backupFile = Join-Path $backupDir "core-postgres-predeploy-$timestamp.dump"
     $tmpFile = "/tmp/core-postgres-predeploy-$timestamp.dump"
 
-    docker compose -f docker-compose.yml exec -T postgres sh -c "pg_dump -U `"`$POSTGRES_USER`" -d `"`$POSTGRES_DB`" -F c -f $tmpFile"
+    docker compose --project-directory $composeDir -f (Join-Path $composeDir "docker-compose.yml") exec -T postgres sh -c "pg_dump -U `"`$POSTGRES_USER`" -d `"`$POSTGRES_DB`" -F c -f $tmpFile"
     docker cp "core-postgres:$tmpFile" $backupFile
-    docker compose -f docker-compose.yml exec -T postgres rm -f $tmpFile
+    docker compose --project-directory $composeDir -f (Join-Path $composeDir "docker-compose.yml") exec -T postgres rm -f $tmpFile
 
     if (-not (Test-Path $backupFile) -or ((Get-Item $backupFile).Length -le 0)) {
       throw "Backup file was not created correctly: $backupFile"

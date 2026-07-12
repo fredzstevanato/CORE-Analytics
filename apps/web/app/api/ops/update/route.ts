@@ -24,10 +24,13 @@ type UpdateCommand = {
   args: string[];
 };
 
+type UpdateMode = "script" | "image";
+
 const startSchema = z.object({
   skipPull: z.boolean().optional().default(false),
   skipBackup: z.boolean().optional().default(false),
-  healthTimeoutSeconds: z.number().int().min(60).max(1800).optional()
+  healthTimeoutSeconds: z.number().int().min(60).max(1800).optional(),
+  mode: z.enum(["script", "image"]).optional().default("script")
 });
 
 const storageRoot = process.env.STORAGE_ROOT ?? path.resolve(process.cwd(), "storage");
@@ -103,6 +106,31 @@ async function isRunningPid(pid: number | null) {
 
 async function resolveUpdateCommand(input: z.infer<typeof startSchema>): Promise<UpdateCommand> {
   const platform = process.platform;
+  const mode: UpdateMode = input.mode;
+
+  if (mode === "image") {
+    if (platform === "win32") {
+      const scriptPath = path.join(process.cwd(), "scripts", "deploy-core-analytics-image.ps1");
+      await fs.access(scriptPath);
+
+      const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/deploy-core-analytics-image.ps1"];
+      if (input.skipPull) args.push("-SkipPull");
+      if (input.skipBackup) args.push("-SkipBackup");
+      if (input.healthTimeoutSeconds) args.push("-HealthTimeoutSeconds", String(input.healthTimeoutSeconds));
+
+      return { command: "powershell", args };
+    }
+
+    const linuxScriptPath = path.join(process.cwd(), "scripts", "deploy-core-analytics-image.sh");
+    await fs.access(linuxScriptPath);
+
+    const args = ["scripts/deploy-core-analytics-image.sh"];
+    if (input.skipPull) args.push("--skip-pull");
+    if (input.skipBackup) args.push("--skip-backup");
+    if (input.healthTimeoutSeconds) args.push("--health-timeout-seconds", String(input.healthTimeoutSeconds));
+
+    return { command: "bash", args };
+  }
 
   if (platform === "win32") {
     const scriptPath = path.join(process.cwd(), "scripts", "update-core-analytics.ps1");

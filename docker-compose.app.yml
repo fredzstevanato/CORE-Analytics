@@ -13,6 +13,7 @@ x-core-app-env: &core-app-env
   SYNC_NODE_NAME: ${SYNC_NODE_NAME:-Local Node}
   CENTRALIZER_URL: ${CENTRALIZER_URL:-}
   SYNC_API_TOKEN: ${SYNC_API_TOKEN:-}
+  CORE_BACKUP_DIR: /data/storage/backups
   FFMPEG_BIN: ffmpeg
   SEVEN_Z_BIN: 7z
   TESSERACT_BIN: tesseract

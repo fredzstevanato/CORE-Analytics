@@ -85,15 +85,15 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="w-64 border-r border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+    <aside className="w-64 border-r border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-gradient-to-b dark:from-zinc-950 dark:to-zinc-900">
       <div className="mb-8">
         <p className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">CORE Analytics</p>
-        <h1 className="text-lg font-bold">Investigative Console</h1>
+        <h1 className="text-lg font-bold text-zinc-950 dark:text-white">Investigative Console</h1>
       </div>
       <nav className="space-y-4">
         {navSections.map((section) => (
           <div key={section.title} className="space-y-1">
-            <p className="px-3 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{section.title}</p>
+            <p className="px-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-400 dark:text-zinc-400">{section.title}</p>
             {section.items.map((item) => {
               const Icon = item.icon;
               const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -101,10 +101,10 @@ export function Sidebar() {
                 <Link
                   key={item.href}
                   href={hrefWithSelection(item.href)}
-                  className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm ${
+                  className={`group flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-all duration-150 ${
                     active
-                      ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950"
-                      : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                      ? "border-l-4 border-sky-400 bg-zinc-900 pl-[0.9rem] font-medium text-zinc-50 shadow-sm dark:border-sky-300 dark:bg-sky-500/25 dark:text-white dark:shadow-[0_0_0_1px_rgba(56,189,248,0.28),0_6px_16px_rgba(0,0,0,0.25)]"
+                      : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800/80"
                   }`}
                 >
                   <Icon className="h-4 w-4" />

@@ -31,16 +31,24 @@ while [ "$#" -gt 0 ]; do
 done
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+if [ -n "${COMPOSE_WORKDIR:-}" ] && [ -d "/host/compose" ]; then
+  COMPOSE_DIR="/host/compose"
+  echo "==> Running in container mode. Compose workdir: $COMPOSE_WORKDIR (mounted at $COMPOSE_DIR)"
+else
+  COMPOSE_DIR="$ROOT_DIR"
+fi
+
 cd "$ROOT_DIR"
 
-if [ ! -f ".env" ]; then
-  echo "Missing .env file in $ROOT_DIR" >&2
+if [ ! -f "$COMPOSE_DIR/.env" ]; then
+  echo "Missing .env file in $COMPOSE_DIR" >&2
   exit 1
 fi
 
 read_env_value() {
   name="$1"
-  value="$(sed -n "s/^$name=//p" .env | tail -n 1 | tr -d '\r')"
+  value="$(sed -n "s/^$name=//p" "$COMPOSE_DIR/.env" | tail -n 1 | tr -d '\r')"
   case "$value" in
     \"*\")
       value="${value#\"}"
@@ -73,7 +81,7 @@ for name in SESSION_SECRET SETTINGS_ENCRYPTION_KEY; do
   fi
 done
 
-COMPOSE_FILES="-f docker-compose.yml -f docker-compose.app.yml"
+COMPOSE_FILES="--project-directory $COMPOSE_DIR -f $COMPOSE_DIR/docker-compose.yml -f $COMPOSE_DIR/docker-compose.app.yml"
 
 wait_container_healthy() {
   container_name="$1"
@@ -114,23 +122,23 @@ docker compose $COMPOSE_FILES config --quiet
 if [ "$SKIP_BACKUP" -eq 0 ]; then
   echo ""
   echo "==> Preparing PostgreSQL for backup"
-  docker compose -f docker-compose.yml up -d postgres
+  docker compose --project-directory "$COMPOSE_DIR" -f "$COMPOSE_DIR/docker-compose.yml" up -d postgres
   wait_container_healthy core-postgres "$HEALTH_TIMEOUT_SECONDS"
 
   echo ""
   echo "==> Creating PostgreSQL backup before update"
-  BACKUP_DIR="${CORE_BACKUP_DIR:-$(read_env_value CORE_BACKUP_DIR)}"
+    BACKUP_DIR="${CORE_BACKUP_DIR:-$(read_env_value CORE_BACKUP_DIR)}"
   if [ -z "$BACKUP_DIR" ]; then
-    BACKUP_DIR="$ROOT_DIR/backups"
+    BACKUP_DIR="${STORAGE_ROOT:-/data/storage}/backups"
   fi
   mkdir -p "$BACKUP_DIR"
   TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
   BACKUP_FILE="$BACKUP_DIR/core-postgres-predeploy-$TIMESTAMP.dump"
   TMP_FILE="/tmp/core-postgres-predeploy-$TIMESTAMP.dump"
 
-  docker compose -f docker-compose.yml exec -T postgres sh -c "pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -F c -f '$TMP_FILE'"
+  docker compose --project-directory "$COMPOSE_DIR" -f "$COMPOSE_DIR/docker-compose.yml" exec -T postgres sh -c "pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -F c -f '$TMP_FILE'"
   docker cp "core-postgres:$TMP_FILE" "$BACKUP_FILE"
-  docker compose -f docker-compose.yml exec -T postgres rm -f "$TMP_FILE"
+  docker compose --project-directory "$COMPOSE_DIR" -f "$COMPOSE_DIR/docker-compose.yml" exec -T postgres rm -f "$TMP_FILE"
 
   if [ ! -s "$BACKUP_FILE" ]; then
     echo "Backup file was not created correctly: $BACKUP_FILE" >&2

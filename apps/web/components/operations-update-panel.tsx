@@ -25,6 +25,7 @@ export function OperationsUpdatePanel() {
   const [tail, setTail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [updateMode, setUpdateMode] = useState<"script" | "image">("script");
   const [skipPull, setSkipPull] = useState(false);
   const [skipBackup, setSkipBackup] = useState(false);
   const [healthTimeout, setHealthTimeout] = useState("300");
@@ -90,6 +91,7 @@ export function OperationsUpdatePanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          mode: updateMode,
           skipPull,
           skipBackup,
           healthTimeoutSeconds: Number.isFinite(timeout) && timeout >= 60 ? timeout : undefined
@@ -109,7 +111,17 @@ export function OperationsUpdatePanel() {
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-5">
+        <label className="flex items-center gap-2 rounded border border-zinc-200 p-2 text-sm dark:border-zinc-700">
+          <select
+            className="w-full rounded border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            value={updateMode}
+            onChange={(e) => setUpdateMode(e.target.value as "script" | "image")}
+          >
+            <option value="script">Atualizacao local</option>
+            <option value="image">Docker Hub</option>
+          </select>
+        </label>
         <label className="flex items-center gap-2 rounded border border-zinc-200 p-2 text-sm">
           <input type="checkbox" checked={skipPull} onChange={(e) => setSkipPull(e.target.checked)} />
           Pular git pull
@@ -130,9 +142,9 @@ export function OperationsUpdatePanel() {
           type="button"
           onClick={startUpdate}
           disabled={loading || Boolean(state?.running)}
-          className="rounded bg-zinc-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          className="rounded bg-zinc-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-950"
         >
-          {loading ? "Iniciando..." : "Executar atualizacao"}
+          {loading ? "Iniciando..." : updateMode === "image" ? "Atualizar via Docker Hub" : "Executar atualizacao"}
         </button>
       </div>
 
@@ -142,6 +154,9 @@ export function OperationsUpdatePanel() {
         </p>
         <p>
           <strong>SO detectado:</strong> {platform}
+        </p>
+        <p>
+          <strong>Modo:</strong> {updateMode === "image" ? "Docker Hub" : "Local/script"}
         </p>
         <p>
           <strong>Comando:</strong> {state?.command || "-"}
