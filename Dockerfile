@@ -13,6 +13,7 @@ RUN apt-get update \
     chromium \
     curl \
     ffmpeg \
+    git \
     p7zip-full \
     python3 \
     python3-pip \

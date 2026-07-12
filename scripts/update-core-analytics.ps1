@@ -48,6 +48,36 @@ function Invoke-Step {
   & $Action
 }
 
+function Invoke-Git {
+  param(
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Arguments
+  )
+
+  if (Get-Command git -ErrorAction SilentlyContinue) {
+    & git @Arguments
+    if ($LASTEXITCODE -ne 0) {
+      throw "git command failed with exit code $LASTEXITCODE"
+    }
+    return
+  }
+
+  Write-Host "Host git not found. Using git from container alpine/git:2.47.2"
+  $rootPath = $root.Path
+  $dockerArgs = @(
+    "run", "--rm",
+    "-v", "${rootPath}:/workspace",
+    "-w", "/workspace",
+    "alpine/git:2.47.2",
+    "git", "-c", "safe.directory=/workspace"
+  ) + $Arguments
+
+  & docker @dockerArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "dockerized git command failed with exit code $LASTEXITCODE"
+  }
+}
+
 function Wait-ContainerHealthy {
   param(
     [string]$ContainerName,
@@ -86,11 +116,11 @@ if (-not $SkipGitPull) {
   }
 
   Invoke-Step "Fetching latest code from origin/$Branch" {
-    git fetch origin $Branch
+    Invoke-Git fetch origin $Branch
   }
 
   Invoke-Step "Updating local branch with fast-forward only" {
-    git pull --ff-only origin $Branch
+    Invoke-Git pull --ff-only origin $Branch
   }
 }
 

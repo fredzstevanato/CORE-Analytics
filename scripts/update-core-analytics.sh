@@ -49,6 +49,24 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 127
 fi
 
+dockerized_git() {
+  docker run --rm \
+    -v "$ROOT_DIR:/workspace" \
+    -w /workspace \
+    alpine/git:2.47.2 \
+    git -c safe.directory=/workspace "$@"
+}
+
+run_git() {
+  if command -v git >/dev/null 2>&1; then
+    git "$@"
+    return
+  fi
+
+  echo "Host git not found. Using git from container alpine/git:2.47.2"
+  dockerized_git "$@"
+}
+
 echo ""
 echo "==> Checking Docker"
 docker version >/dev/null
@@ -62,11 +80,11 @@ if [ "$SKIP_GIT_PULL" -eq 0 ]; then
 
   echo ""
   echo "==> Fetching latest code from origin/$BRANCH"
-  git fetch origin "$BRANCH"
+  run_git fetch origin "$BRANCH"
 
   echo ""
   echo "==> Updating local branch with fast-forward only"
-  git pull --ff-only origin "$BRANCH"
+  run_git pull --ff-only origin "$BRANCH"
 fi
 
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.app.yml"
