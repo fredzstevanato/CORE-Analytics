@@ -23,7 +23,7 @@ x-core-app-env: &core-app-env
 
 services:
   web:
-    image: ${CORE_IMAGE:-core-analytics:${CORE_IMAGE_TAG:-local}}
+    image: ${CORE_IMAGE:-core-analytics:${CORE_IMAGE_TAG:-latest}}
     container_name: core-web
     restart: unless-stopped
     labels:
@@ -53,7 +53,7 @@ services:
       retries: 20
 
   worker-ingest:
-    image: ${CORE_IMAGE:-core-analytics:${CORE_IMAGE_TAG:-local}}
+    image: ${CORE_IMAGE:-core-analytics:${CORE_IMAGE_TAG:-latest}}
     container_name: core-worker-ingest
     restart: unless-stopped
     labels:
@@ -76,7 +76,7 @@ services:
       - ${UFDR_SOURCE_ROOT:-./storage/ufdr-imports}:/mnt/ufdr:ro
 
   worker-ai:
-    image: ${CORE_IMAGE:-core-analytics:${CORE_IMAGE_TAG:-local}}
+    image: ${CORE_IMAGE:-core-analytics:${CORE_IMAGE_TAG:-latest}}
     container_name: core-worker-ai
     restart: unless-stopped
     labels:
