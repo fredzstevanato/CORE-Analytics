@@ -30,6 +30,7 @@ services:
     environment:
       <<: *core-app-env
       RUN_DB_MIGRATIONS: "true"
+      COMPOSE_WORKDIR: ${COMPOSE_WORKDIR:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,6 +43,8 @@ services:
     volumes:
       - ${STORAGE_ROOT:-./storage}:/data/storage
       - ${UFDR_SOURCE_ROOT:-./storage/ufdr-imports}:/mnt/ufdr:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${COMPOSE_WORKDIR:-.}:/host/compose:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3001/api/health >/dev/null || exit 1"]
       interval: 20s
