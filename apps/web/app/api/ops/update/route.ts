@@ -19,15 +19,15 @@ type UpdateState = {
   lastError: string | null;
 };
 
+type UpdateCommand = {
+  command: string;
+  args: string[];
+};
+
 const startSchema = z.object({
   skipPull: z.boolean().optional().default(false),
   skipBackup: z.boolean().optional().default(false),
   healthTimeoutSeconds: z.number().int().min(60).max(1800).optional()
-});
-
-const commandSchema = z.object({
-  command: z.string().min(1),
-  args: z.array(z.string()).default([])
 });
 
 const storageRoot = process.env.STORAGE_ROOT ?? path.resolve(process.cwd(), "storage");
@@ -101,6 +101,32 @@ async function isRunningPid(pid: number | null) {
   }
 }
 
+async function resolveUpdateCommand(input: z.infer<typeof startSchema>): Promise<UpdateCommand> {
+  const platform = process.platform;
+
+  if (platform === "win32") {
+    const scriptPath = path.join(process.cwd(), "scripts", "update-core-analytics.ps1");
+    await fs.access(scriptPath);
+
+    const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/update-core-analytics.ps1"];
+    if (input.skipPull) args.push("-SkipGitPull");
+    if (input.skipBackup) args.push("-SkipBackup");
+    if (input.healthTimeoutSeconds) args.push("-HealthTimeoutSeconds", String(input.healthTimeoutSeconds));
+
+    return { command: "powershell", args };
+  }
+
+  const linuxScriptPath = path.join(process.cwd(), "scripts", "update-core-analytics.sh");
+  await fs.access(linuxScriptPath);
+
+  const args = ["scripts/update-core-analytics.sh"];
+  if (input.skipPull) args.push("--skip-git-pull");
+  if (input.skipBackup) args.push("--skip-backup");
+  if (input.healthTimeoutSeconds) args.push("--health-timeout-seconds", String(input.healthTimeoutSeconds));
+
+  return { command: "bash", args };
+}
+
 export async function GET() {
   const auth = await requireApiSession();
   if ("error" in auth) return auth.error;
@@ -117,7 +143,7 @@ export async function GET() {
     await writeState(state);
   }
 
-  return NextResponse.json({ state, running, tail });
+  return NextResponse.json({ state, running, tail, platform: process.platform });
 }
 
 export async function POST(request: Request) {
@@ -134,22 +160,23 @@ export async function POST(request: Request) {
 
   const parsed = startSchema.parse(await request.json().catch(() => ({})));
 
-  const defaultCmd = commandSchema.parse({
-    command: "bash",
-    args: ["scripts/deploy-core-analytics-image.sh"]
-  });
-
-  const args = [...defaultCmd.args];
-  if (parsed.skipPull) args.push("--skip-pull");
-  if (parsed.skipBackup) args.push("--skip-backup");
-  if (parsed.healthTimeoutSeconds) {
-    args.push("--health-timeout-seconds", String(parsed.healthTimeoutSeconds));
+  let updateCmd: UpdateCommand;
+  try {
+    updateCmd = await resolveUpdateCommand(parsed);
+  } catch {
+    return NextResponse.json(
+      {
+        error:
+          "Script de atualizacao nao encontrado para este sistema operacional. Verifique scripts/update-core-analytics.ps1 (Windows) ou scripts/update-core-analytics.sh (Linux)."
+      },
+      { status: 500 }
+    );
   }
 
   await ensureOpsDir();
   await fs.writeFile(logPath, "", "utf8");
 
-  const commandForState = [defaultCmd.command, ...args].join(" ");
+  const commandForState = [updateCmd.command, ...updateCmd.args].join(" ");
   const next: UpdateState = {
     running: true,
     startedAt: new Date().toISOString(),
@@ -161,7 +188,7 @@ export async function POST(request: Request) {
     lastError: null
   };
 
-  const child = spawn(defaultCmd.command, args, {
+  const child = spawn(updateCmd.command, updateCmd.args, {
     cwd: process.cwd(),
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
